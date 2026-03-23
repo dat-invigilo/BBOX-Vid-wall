@@ -53,11 +53,8 @@ class RTSPStreamHandler:
                         logger.error(f"Stream {self.stream_id}: File not found: {self.rtsp_url}")
                         return False
             else:
-                # For RTSP streams, use TCP transport for reliability (instead of UDP)
-                if source.startswith('rtsp://'):
-                    source = source.replace('rtsp://', 'rtsp://', 1)
-                    # Use URL option for TCP transport
-                    logger.info(f"Stream {self.stream_id}: Using TCP transport for RTSP stream")
+                # RTSP stream - will attempt connection as-is
+                logger.debug(f"Stream {self.stream_id}: RTSP stream URL detected")
             
             logger.debug(f"Stream {self.stream_id}: Creating VideoCapture with source: {source}")
             self.cap = cv2.VideoCapture(source)
@@ -68,8 +65,10 @@ class RTSPStreamHandler:
             self.cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
             
             # Try to skip corrupted/error frames at the beginning
+            # Some RTSP streams have H.264 decoder errors at startup (PPS/slice header errors)
+            # We need multiple retries with longer delays to let the stream stabilize
             logger.debug(f"Stream {self.stream_id}: Attempting to read first frame (may skip error frames)...")
-            max_retries = 5
+            max_retries = 100  # Increased retries for stream startup stabilization
             frame_attempts = 0
             ret = False
             frame = None
@@ -79,8 +78,9 @@ class RTSPStreamHandler:
                 if not ret:
                     frame_attempts += 1
                     if frame_attempts < max_retries:
-                        logger.debug(f"Stream {self.stream_id}: Frame read failed (attempt {frame_attempts}/{max_retries}), retrying...")
-                        time.sleep(0.1)  # Brief delay before retry
+                        delay = 0.2 if frame_attempts < 5 else 0.5  # Longer delay after initial attempts
+                        logger.debug(f"Stream {self.stream_id}: Frame read failed (attempt {frame_attempts}/{max_retries}), retrying in {delay}s...")
+                        time.sleep(delay)
             
             if not ret:
                 logger.warning(f"Stream {self.stream_id}: Failed to read any valid frames after {max_retries} attempts from {self.rtsp_url}")

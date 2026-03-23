@@ -19,9 +19,7 @@ resolution: '1920x1080'  # Options: 1920x1080, 1280x720, 2560x1440
 # RTSP streams to display (used when dev_mode is false)
 # Add your camera stream URLs here
 streams:
-  - 'rtsp://10.2.0.4:8554/site31-test-usecase-34-1-v3.mp4'
-  - 'rtsp://10.2.0.4:8554/site31-test-usecase-33-3-v3.mp4'
-  - 'rtsp://10.2.0.4:8554/forklift_output_15kmph.mp4'
+  - 'rtsp://localhost:7001/ds-test'
 
 # Performance tuning
 performance:
