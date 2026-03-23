@@ -19,10 +19,9 @@ resolution: '1920x1080'  # Options: 1920x1080, 1280x720, 2560x1440
 # RTSP streams to display (used when dev_mode is false)
 # Add your camera stream URLs here
 streams:
-  - 'rtsp://admin:password@192.168.1.100:554/stream1'
-  - 'rtsp://admin:password@192.168.1.101:554/stream1'
-  - 'rtsp://admin:password@192.168.1.102:554/stream1'
-  - 'rtsp://admin:password@192.168.1.103:554/stream1'
+  - 'rtsp://10.2.0.4:8554/site31-test-usecase-34-1-v3.mp4'
+  - 'rtsp://10.2.0.4:8554/site31-test-usecase-33-3-v3.mp4'
+  - 'rtsp://10.2.0.4:8554/forklift_output_15kmph.mp4'
 
 # Performance tuning
 performance:
@@ -41,8 +40,8 @@ save_mode:
   recording_height: 1080
   
   # Rotation policy (in minutes)
-  chunk_duration_minutes: 60    # Duration of each MP4 file (1 hour)
-  total_rotation_minutes: 1440  # Total rotation cycle (24 hours = 1440 minutes)
+  chunk_duration_minutes: 1    # Duration of each MP4 file (1 hour)
+  total_rotation_minutes: 2  # Total rotation cycle (24 hours = 1440 minutes)
   
   # Cleanup/retention
   cleanup_incomplete: true

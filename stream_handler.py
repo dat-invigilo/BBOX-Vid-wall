@@ -8,6 +8,7 @@ from queue import Queue
 from typing import Optional
 import logging
 import os
+import traceback
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,7 @@ class RTSPStreamHandler:
     def connect(self) -> bool:
         """Establish connection to RTSP stream or local video file"""
         try:
+            logger.info(f"Stream {self.stream_id}: Attempting to connect to: {self.rtsp_url}")
             # Handle file paths - convert backslashes to forward slashes for OpenCV
             source = self.rtsp_url
             
@@ -51,12 +53,15 @@ class RTSPStreamHandler:
                         logger.error(f"Stream {self.stream_id}: File not found: {self.rtsp_url}")
                         return False
             
+            logger.debug(f"Stream {self.stream_id}: Creating VideoCapture with source: {source}")
             self.cap = cv2.VideoCapture(source)
+            logger.debug(f"Stream {self.stream_id}: VideoCapture object created")
             
             # Set connection timeout and buffer size
             self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             self.cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
             
+            logger.debug(f"Stream {self.stream_id}: Attempting to read first frame...")
             # Try to read one frame to verify connection
             ret, frame = self.cap.read()
             if not ret:
@@ -66,6 +71,7 @@ class RTSPStreamHandler:
                     self.cap = None
                 return False
             
+            logger.debug(f"Stream {self.stream_id}: First frame read successfully")
             # Get stream properties
             self.stream_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             self.stream_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -80,6 +86,7 @@ class RTSPStreamHandler:
             
         except Exception as e:
             logger.error(f"Stream {self.stream_id}: Connection error - {str(e)}")
+            logger.error(f"Stream {self.stream_id}: Traceback:\n{traceback.format_exc()}")
             if self.cap:
                 self.cap.release()
                 self.cap = None
@@ -87,26 +94,38 @@ class RTSPStreamHandler:
     
     def start(self):
         """Start the stream capture thread"""
-        if self.is_running:
-            return
-        
-        if not self.connect():
-            logger.error(f"Stream {self.stream_id}: Failed to connect")
-            return
-        
-        self.is_running = True
-        self.thread = threading.Thread(target=self._capture_loop, daemon=True)
-        self.thread.start()
-        logger.info(f"Stream {self.stream_id}: Capture thread started")
+        try:
+            logger.info(f"Stream {self.stream_id}: start() called")
+            
+            if self.is_running:
+                logger.warning(f"Stream {self.stream_id}: Already running, skipping start")
+                return
+            
+            logger.info(f"Stream {self.stream_id}: Attempting connection...")
+            if not self.connect():
+                logger.error(f"Stream {self.stream_id}: Failed to connect, will not start capture thread")
+                return
+            
+            logger.info(f"Stream {self.stream_id}: Connection successful, starting capture thread")
+            self.is_running = True
+            self.thread = threading.Thread(target=self._capture_loop, daemon=True)
+            self.thread.start()
+            logger.info(f"Stream {self.stream_id}: Capture thread started successfully")
+        except Exception as e:
+            logger.error(f"Stream {self.stream_id}: Exception in start(): {str(e)}")
+            logger.error(f"Stream {self.stream_id}: Traceback:\n{traceback.format_exc()}")
+            self.is_running = False
     
     def _capture_loop(self):
         """Main capture loop running in separate thread"""
+        logger.info(f"Stream {self.stream_id}: _capture_loop started")
         consecutive_failures = 0
         max_consecutive_failures = 30  # ~30 frames at 30fps
         
         while self.is_running:
             try:
                 if self.cap is None:
+                    logger.debug(f"Stream {self.stream_id}: cap is None, attempting reconnection")
                     if not self.connect():
                         time.sleep(1)
                         continue
@@ -129,6 +148,8 @@ class RTSPStreamHandler:
                             pass
                 else:
                     consecutive_failures += 1
+                    if consecutive_failures % 10 == 0:  # Log every 10 failures
+                        logger.debug(f"Stream {self.stream_id}: Read failed {consecutive_failures} times")
                     if consecutive_failures > max_consecutive_failures:
                         logger.warning(f"Stream {self.stream_id}: Too many read failures, reconnecting...")
                         self.cap.release()
@@ -138,6 +159,7 @@ class RTSPStreamHandler:
                     
             except Exception as e:
                 logger.error(f"Stream {self.stream_id}: Capture error - {str(e)}")
+                logger.error(f"Stream {self.stream_id}: Traceback:\n{traceback.format_exc()}")
                 consecutive_failures += 1
                 time.sleep(1)
     

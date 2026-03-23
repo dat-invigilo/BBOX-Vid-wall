@@ -5,6 +5,7 @@ import cv2
 import numpy as np
 from typing import List, Dict, Optional
 import logging
+import traceback
 from stream_handler import RTSPStreamHandler
 
 logger = logging.getLogger(__name__)
@@ -56,10 +57,22 @@ class VideoWallDisplay:
     
     def start(self):
         """Start all stream handlers"""
-        for i, handler in self.handlers.items():
-            if handler:
-                handler.start()
-        logger.info("All streams started")
+        try:
+            logger.info(f"Starting {len(self.handlers)} stream handlers")
+            started_count = 0
+            for i, handler in self.handlers.items():
+                if handler:
+                    logger.info(f"Starting handler {i} for stream: {self.streams[i]}")
+                    handler.start()
+                    started_count += 1
+                    logger.info(f"Handler {i} started successfully")
+                else:
+                    logger.debug(f"Handler {i} is None (empty cell)")
+            logger.info(f"All {started_count} streams started successfully")
+        except Exception as e:
+            logger.error(f"Error starting streams: {str(e)}")
+            logger.error(f"Traceback:\n{traceback.format_exc()}")
+            raise
     
     def stop(self):
         """Stop all stream handlers"""

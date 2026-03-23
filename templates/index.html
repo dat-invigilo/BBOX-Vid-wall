@@ -569,22 +569,53 @@
             }
 
             const [width, height] = resolution.split('x').map(Number);
+            
+            // Show loading message and update placeholder
+            showMessage('Loading streams...', 'info');
+            const placeholder = document.getElementById('placeholder');
+            placeholder.innerHTML = '<div class="placeholder-icon">⏳</div><div>Connecting to streams...</div>';
+            placeholder.style.display = 'block';
+            
+            console.log('[startWall] Calling /api/start with:', { streams: streams.length, cols, rows, width, height });
 
             fetch(`${API_BASE}/api/start`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ streams, cols, rows, width, height })
             })
-            .then(r => r.json())
+            .then(r => {
+                console.log('[startWall] API response status:', r.status);
+                return r.json();
+            })
             .then(data => {
+                console.log('[startWall] API response data:', data);
                 if (data.status === 'started') {
                     showMessage('Video wall started!', 'success');
+                    
+                    // Immediately show video feed without waiting for status check
+                    console.log('[startWall] Showing video feed immediately');
+                    const videoFeed = document.getElementById('videoFeed');
+                    const statusDot = document.getElementById('statusDot');
+                    const statusText = document.getElementById('statusText');
+                    
+                    placeholder.style.display = 'none';
+                    videoFeed.style.display = 'block';
+                    statusDot.classList.add('running');
+                    statusText.textContent = 'Running';
+                    document.getElementById('startBtn').disabled = true;
+                    document.getElementById('stopBtn').disabled = false;
+                    
+                    // Also call updateStatus to get complete info
                     updateStatus();
                 } else {
+                    console.error('[startWall] Start failed:', data.error);
                     showMessage(data.error || 'Failed to start', 'error');
                 }
             })
-            .catch(e => showMessage(`Error: ${e.message}`, 'error'));
+            .catch(e => {
+                console.error('[startWall] Error:', e);
+                showMessage(`Error: ${e.message}`, 'error');
+            });
         }
 
         function stopWall() {
@@ -646,9 +677,16 @@
 
         // Save Mode Recording Functions
         function loadSaveModeConfig() {
-            fetch(`${API_BASE}/api/save-mode/config`)
+            // Pass current dev_mode state from UI to API so it returns the right streams
+            const devMode = document.getElementById('devMode').checked;
+            const apiUrl = `${API_BASE}/api/save-mode/config?dev_mode=${devMode}`;
+            
+            console.log('[loadSaveModeConfig] Fetching with dev_mode:', devMode);
+            
+            fetch(apiUrl)
                 .then(r => r.json())
                 .then(data => {
+                    console.log('[loadSaveModeConfig] Received streams:', data.available_streams.length, 'dev_mode:', data.dev_mode);
                     const config = data.save_mode_config || {};
                     const streams = data.available_streams || [];
 
@@ -728,16 +766,19 @@
             // Get selected streams
             const checkboxes = document.querySelectorAll('#streamCheckboxes input[type="checkbox"]:checked');
             const selectedIndices = Array.from(checkboxes).map(cb => parseInt(cb.value));
+            const devMode = document.getElementById('devMode').checked;
 
             if (selectedIndices.length === 0) {
                 showMessage('Please select at least one stream to record', 'error');
                 return;
             }
 
+            console.log('[startRecording] Starting with dev_mode:', devMode, 'streams:', selectedIndices);
+
             fetch(`${API_BASE}/api/save-mode/start`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ stream_indices: selectedIndices })
+                body: JSON.stringify({ stream_indices: selectedIndices, dev_mode: devMode })
             })
             .then(r => r.json())
             .then(data => {
@@ -774,6 +815,10 @@
             document.getElementById('streams').style.display = devMode ? 'none' : 'block';
             document.getElementById('testVidsSection').style.display = devMode ? 'block' : 'none';
             document.getElementById('streamsLabel').textContent = devMode ? 'Test Videos' : 'RTSP Streams';
+            
+            // Reload recording streams when dev mode changes
+            console.log('[updateDevModeUI] Dev mode changed, reloading save mode config. Dev mode:', devMode);
+            loadSaveModeConfig();
         }
 
         // Event listeners

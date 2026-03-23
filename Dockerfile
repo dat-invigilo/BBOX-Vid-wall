@@ -34,6 +34,6 @@ COPY templates/ ./templates/
 ENV PYTHONUNBUFFERED=1
 ENV FLASK_ENV=production
 
-EXPOSE 5000
+EXPOSE 5001
 
 CMD ["python", "web_server.py"]

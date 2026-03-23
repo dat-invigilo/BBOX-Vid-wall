@@ -40,10 +40,14 @@ env/
 
 # Project specific
 logs/
+recordings/
 *.log
 config.local.yaml
 .DS_Store
 *.pyc
 
+
 # Docker
 .dockerignore
+
+

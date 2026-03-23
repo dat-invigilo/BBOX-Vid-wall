@@ -89,6 +89,14 @@ class StreamRecorder:
                 self.capture = None
                 return False
             
+            # Detect actual FPS from stream
+            detected_fps = self.capture.get(cv2.CAP_PROP_FPS)
+            if detected_fps > 0 and detected_fps != self.fps:
+                logger.info(f"Stream {self.stream_id}: Detected FPS {detected_fps}, using instead of configured {self.fps}")
+                self.fps = detected_fps
+            else:
+                logger.info(f"Stream {self.stream_id}: Using configured FPS {self.fps}")
+            
             logger.info(f"Stream {self.stream_id}: Connected to {self.stream_source}")
             return True
             
@@ -120,7 +128,7 @@ class StreamRecorder:
             self.current_file = filepath
             self.current_chunk = chunk_index
             self.frame_count = 0
-            logger.info(f"Stream {self.stream_id}: Started chunk {chunk_padded} -> {filename}")
+            logger.info(f"Stream {self.stream_id}: Started chunk {chunk_padded} -> {filename} (FPS: {self.fps}, Resolution: {self.width}x{self.height})")
             return True
             
         except Exception as e:
