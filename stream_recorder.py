@@ -81,13 +81,28 @@ class StreamRecorder:
             self.capture = cv2.VideoCapture(source)
             self.capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             
-            # Verify connection
-            ret, frame = self.capture.read()
+            # Try to skip corrupted/error frames at the beginning
+            logger.debug(f"Stream {self.stream_id}: Attempting to read first frame (may skip error frames)...")
+            max_retries = 5
+            frame_attempts = 0
+            ret = False
+            frame = None
+            
+            while not ret and frame_attempts < max_retries:
+                ret, frame = self.capture.read()
+                if not ret:
+                    frame_attempts += 1
+                    if frame_attempts < max_retries:
+                        logger.debug(f"Stream {self.stream_id}: Frame read failed (attempt {frame_attempts}/{max_retries}), retrying...")
+                        time.sleep(0.1)  # Brief delay before retry
+            
             if not ret:
-                logger.warning(f"Stream {self.stream_id}: Failed to read initial frame")
+                logger.warning(f"Stream {self.stream_id}: Failed to read any valid frames after {max_retries} attempts")
                 self.capture.release()
                 self.capture = None
                 return False
+            
+            logger.debug(f"Stream {self.stream_id}: Valid frame read successfully (after {frame_attempts} attempts)")
             
             # Detect actual FPS from stream
             detected_fps = self.capture.get(cv2.CAP_PROP_FPS)

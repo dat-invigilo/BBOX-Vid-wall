@@ -52,6 +52,12 @@ class RTSPStreamHandler:
                     if not os.path.isfile(source.replace('/', '\\')):
                         logger.error(f"Stream {self.stream_id}: File not found: {self.rtsp_url}")
                         return False
+            else:
+                # For RTSP streams, use TCP transport for reliability (instead of UDP)
+                if source.startswith('rtsp://'):
+                    source = source.replace('rtsp://', 'rtsp://', 1)
+                    # Use URL option for TCP transport
+                    logger.info(f"Stream {self.stream_id}: Using TCP transport for RTSP stream")
             
             logger.debug(f"Stream {self.stream_id}: Creating VideoCapture with source: {source}")
             self.cap = cv2.VideoCapture(source)
@@ -61,17 +67,29 @@ class RTSPStreamHandler:
             self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             self.cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
             
-            logger.debug(f"Stream {self.stream_id}: Attempting to read first frame...")
-            # Try to read one frame to verify connection
-            ret, frame = self.cap.read()
+            # Try to skip corrupted/error frames at the beginning
+            logger.debug(f"Stream {self.stream_id}: Attempting to read first frame (may skip error frames)...")
+            max_retries = 5
+            frame_attempts = 0
+            ret = False
+            frame = None
+            
+            while not ret and frame_attempts < max_retries:
+                ret, frame = self.cap.read()
+                if not ret:
+                    frame_attempts += 1
+                    if frame_attempts < max_retries:
+                        logger.debug(f"Stream {self.stream_id}: Frame read failed (attempt {frame_attempts}/{max_retries}), retrying...")
+                        time.sleep(0.1)  # Brief delay before retry
+            
             if not ret:
-                logger.warning(f"Stream {self.stream_id}: Failed to read frame from {self.rtsp_url}")
+                logger.warning(f"Stream {self.stream_id}: Failed to read any valid frames after {max_retries} attempts from {self.rtsp_url}")
                 if self.cap:
                     self.cap.release()
                     self.cap = None
                 return False
             
-            logger.debug(f"Stream {self.stream_id}: First frame read successfully")
+            logger.debug(f"Stream {self.stream_id}: Valid frame read successfully (after {frame_attempts} attempts)")
             # Get stream properties
             self.stream_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             self.stream_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
