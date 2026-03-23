@@ -64,9 +64,14 @@ class RTSPStreamHandler:
             self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             self.cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
             
+            # For RTSP streams with severe H.264 decoder issues, let the stream warm up
+            # before attempting to read. This gives the server time to stabilize output.
+            logger.debug(f"Stream {self.stream_id}: Waiting 2s for stream stabilization...")
+            time.sleep(2)
+            
             # Try to skip corrupted/error frames at the beginning
             # Some RTSP streams have H.264 decoder errors at startup (PPS/slice header errors)
-            # We need multiple retries with longer delays to let the stream stabilize
+            # We need many retries with longer delays to let the stream recover
             logger.debug(f"Stream {self.stream_id}: Attempting to read first frame (may skip error frames)...")
             max_retries = 100  # Increased retries for stream startup stabilization
             frame_attempts = 0
@@ -78,7 +83,13 @@ class RTSPStreamHandler:
                 if not ret:
                     frame_attempts += 1
                     if frame_attempts < max_retries:
-                        delay = 0.2 if frame_attempts < 5 else 0.5  # Longer delay after initial attempts
+                        # Exponential backoff: start fast, gradually increase delay
+                        if frame_attempts <= 10:
+                            delay = 0.1
+                        elif frame_attempts <= 30:
+                            delay = 0.2
+                        else:
+                            delay = 0.5
                         logger.debug(f"Stream {self.stream_id}: Frame read failed (attempt {frame_attempts}/{max_retries}), retrying in {delay}s...")
                         time.sleep(delay)
             
