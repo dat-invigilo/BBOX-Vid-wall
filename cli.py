@@ -1,6 +1,6 @@
 """
 CLI Utility for Video Wall Application
-Provides command-line interface for headless operation
+Provides command-line interface for headless operation using FFmpeg
 """
 import argparse
 import yaml
@@ -8,7 +8,7 @@ import sys
 import logging
 from typing import List
 from video_wall import VideoWallDisplay
-import cv2
+import subprocess
 import time
 
 logging.basicConfig(level=logging.INFO)
@@ -43,10 +43,34 @@ def run_headless(streams: List[str], cols: int, rows: int,
     
     if output_file:
         logger.info(f"Output to: {output_file}")
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter(output_file, fourcc, 30.0, (width, height))
+        # Start FFmpeg process to encode frames piped to stdin
+        cmd = [
+            'ffmpeg',
+            '-y',  # Overwrite output file
+            '-f', 'rawvideo',
+            '-pix_fmt', 'bgr24',
+            '-s', f'{width}x{height}',
+            '-r', '30',  # Input frame rate
+            '-i', 'pipe:0',
+            '-c:v', 'libx264',
+            '-preset', 'fast',
+            '-crf', '23',
+            output_file
+        ]
+        
+        try:
+            ffmpeg_process = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            logger.info(f"FFmpeg process started (PID: {ffmpeg_process.pid})")
+        except Exception as e:
+            logger.error(f"Failed to start FFmpeg: {str(e)}")
+            ffmpeg_process = None
     else:
-        out = None
+        ffmpeg_process = None
     
     try:
         frame_count = 0
@@ -55,8 +79,13 @@ def run_headless(streams: List[str], cols: int, rows: int,
         while True:
             frame = wall.get_wall_frame()
             if frame is not None:
-                if out:
-                    out.write(frame)
+                if ffmpeg_process:
+                    try:
+                        ffmpeg_process.stdin.write(frame.tobytes())
+                    except (BrokenPipeError, OSError):
+                        logger.error("FFmpeg process pipe broken, stopping output")
+                        ffmpeg_process = None
+                
                 frame_count += 1
                 
                 if frame_count % 300 == 0:  # Log every 10 seconds at 30fps
@@ -70,9 +99,13 @@ def run_headless(streams: List[str], cols: int, rows: int,
         logger.info("Shutting down...")
     finally:
         wall.stop()
-        if out:
-            out.release()
-            logger.info(f"Video saved to {output_file}")
+        if ffmpeg_process:
+            try:
+                ffmpeg_process.stdin.close()
+                ffmpeg_process.wait(timeout=5)
+                logger.info(f"Video saved to {output_file}")
+            except Exception as e:
+                logger.error(f"Error closing FFmpeg: {str(e)}")
 
 
 def main():

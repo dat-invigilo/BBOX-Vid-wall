@@ -1,8 +1,7 @@
 """
 Web Server for Video Wall Application
-Serves video wall display via HTTP streaming
+Serves video wall display via HTTP streaming using FFmpeg
 """
-import cv2
 import numpy as np
 import threading
 import time
@@ -14,6 +13,7 @@ import yaml
 import os
 from io import BytesIO
 import traceback
+from PIL import Image, ImageDraw, ImageFont
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -128,23 +128,50 @@ streamer = VideoWallStreamer()
 
 
 def generate_placeholder_frame(width=1280, height=720):
-    """Generate a placeholder/waiting frame"""
+    """Generate a placeholder/waiting frame using PIL"""
+    # Create a numpy array (BGR format for consistency)
     frame = np.zeros((height, width, 3), dtype=np.uint8)
-    # Create a dark blue background
-    frame[:] = (40, 40, 80)
+    frame[:] = (40, 40, 80)  # Dark blue background
     
-    # Add text
-    font = cv2.FONT_HERSHEY_SIMPLEX
+    # Convert to PIL Image (RGB)
+    pil_image = Image.fromarray(frame[:, :, ::-1])  # BGR to RGB
+    draw = ImageDraw.Draw(pil_image)
+    
+    # Add text using PIL
     text = "Waiting for video stream..."
-    font_scale = 1.0
-    thickness = 2
-    color = (200, 200, 200)
-    text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
-    text_x = (width - text_size[0]) // 2
-    text_y = (height - text_size[1]) // 2
-    cv2.putText(frame, text, (text_x, text_y), font, font_scale, color, thickness)
+    try:
+        # Try to use a nice font if available
+        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 32)
+    except:
+        # Fallback to default font
+        font = ImageFont.load_default()
     
-    return frame
+    # Get text bounding box
+    bbox = draw.textbbox((0, 0), text, font=font)
+    text_width = bbox[2] - bbox[0]
+    text_height = bbox[3] - bbox[1]
+    
+    text_x = (width - text_width) // 2
+    text_y = (height - text_height) // 2
+    
+    # Draw text (white color)
+    draw.text((text_x, text_y), text, font=font, fill=(200, 200, 200))
+    
+    # Convert back to numpy array (BGR)
+    frame_array = np.array(pil_image)[:, :, ::-1]  # RGB to BGR
+    return frame_array
+
+
+def encode_frame_to_jpeg(frame):
+    """Encode a numpy array frame to JPEG bytes"""
+    # Convert BGR to RGB for PIL
+    rgb_frame = frame[:, :, ::-1]
+    pil_image = Image.fromarray(rgb_frame)
+    
+    # Encode to JPEG
+    buf = BytesIO()
+    pil_image.save(buf, format='JPEG', quality=90)
+    return buf.getvalue()
 
 def generate_frames():
     """Generate video stream frames"""
@@ -163,8 +190,7 @@ def generate_frames():
         # Generate placeholder frame to keep connection alive
         placeholder = generate_placeholder_frame()
         try:
-            ret, buffer = cv2.imencode('.jpg', placeholder)
-            frame_bytes = buffer.tobytes()
+            frame_bytes = encode_frame_to_jpeg(placeholder)
             frame_count += 1
             
             yield (b'--frame\r\n'
@@ -191,8 +217,7 @@ def generate_frames():
         
         try:
             # Encode frame to JPEG
-            ret, buffer = cv2.imencode('.jpg', frame)
-            frame_bytes = buffer.tobytes()
+            frame_bytes = encode_frame_to_jpeg(frame)
             
             frame_count += 1
             if frame_count % 30 == 0:  # Log every 30 frames (~1 second at 30fps)
@@ -525,4 +550,4 @@ def api_savemode_download():
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5001, debug=False, threaded=True)
+    app.run(host='0.0.0.0', port=5002, debug=False, threaded=True)

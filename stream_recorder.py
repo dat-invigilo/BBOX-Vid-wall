@@ -78,8 +78,28 @@ class StreamRecorder:
                 source = self.stream_source.replace('\\', '/')
                 logger.info(f"Stream {self.stream_id}: Using local file: {source}")
             
-            self.capture = cv2.VideoCapture(source)
+            # For RTSP streams, explicitly set the backend to avoid CAP_IMAGES fallback
+            if self.stream_source.startswith('rtsp://'):
+                self.capture = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+                logger.debug(f"Stream {self.stream_id}: Using CAP_FFMPEG backend for RTSP stream")
+            else:
+                self.capture = cv2.VideoCapture(source)
+            
             self.capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            
+            # Additional properties for better H.264 decoding robustness
+            self.capture.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)  # 5 sec timeout on open
+            
+            # Try hardware acceleration for better H.264 handling
+            try:
+                self.capture.set(cv2.CAP_PROP_HW_ACCELERATION, cv2.VIDEO_ACCELERATION_CUDA)
+                logger.debug(f"Stream {self.stream_id}: Enabled CUDA acceleration for H.264 decoding")
+            except:
+                try:
+                    self.capture.set(cv2.CAP_PROP_HW_ACCELERATION, cv2.VIDEO_ACCELERATION_MFX)
+                    logger.debug(f"Stream {self.stream_id}: Enabled MFX acceleration for H.264 decoding")
+                except:
+                    logger.debug(f"Stream {self.stream_id}: Hardware acceleration not available, using software decoding")
             
             # For RTSP streams with severe H.264 decoder issues, let the stream warm up
             # before attempting to read. This gives the server time to stabilize output.
@@ -90,7 +110,7 @@ class StreamRecorder:
             # Some RTSP streams have H.264 decoder errors at startup (PPS/slice header errors)
             # We need many retries with longer delays to let the stream recover
             logger.debug(f"Stream {self.stream_id}: Attempting to read first frame (may skip error frames)...")
-            max_retries = 100  # Increased retries for stream startup stabilization
+            max_retries = 10000  # Increased retries for grossly corrupted streams
             frame_attempts = 0
             ret = False
             frame = None
@@ -100,14 +120,18 @@ class StreamRecorder:
                 if not ret:
                     frame_attempts += 1
                     if frame_attempts < max_retries:
-                        # Exponential backoff: start fast, gradually increase delay
+                        # Aggressive backoff: more patient with corrupted streams
                         if frame_attempts <= 10:
+                            delay = 0.05  # Quick initial retries
+                        elif frame_attempts <= 50:
                             delay = 0.1
-                        elif frame_attempts <= 30:
+                        elif frame_attempts <= 200:
                             delay = 0.2
                         else:
                             delay = 0.5
-                        logger.debug(f"Stream {self.stream_id}: Frame read failed (attempt {frame_attempts}/{max_retries}), retrying in {delay}s...")
+                        
+                        if frame_attempts % 100 == 0:
+                            logger.debug(f"Stream {self.stream_id}: Frame read attempts: {frame_attempts}/{max_retries}, still waiting for valid H.264 frames...")
                         time.sleep(delay)
             
             if not ret:
@@ -130,7 +154,11 @@ class StreamRecorder:
             return True
             
         except Exception as e:
-            logger.error(f"Stream {self.stream_id}: Connection failed - {str(e)}")
+            error_msg = f"Stream {self.stream_id}: Connection failed - {str(e)}"
+            if self.stream_source.startswith('rtsp://') and ('Connection refused' in str(e) or 'refused' in str(e)):
+                error_msg += "\n  → RTSP server is not responding (Connection refused)"
+                error_msg += "\n  → Ensure the RTSP server is running on the specified host and port"
+            logger.error(error_msg)
             return False
     
     def _rotate_file(self, chunk_index: int) -> bool:

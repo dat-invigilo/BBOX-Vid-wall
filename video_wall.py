@@ -1,12 +1,12 @@
 """
-Video Wall Display - Displays multiple RTSP streams in a grid layout
+Video Wall Display - Displays multiple RTSP streams in a grid layout using FFmpeg
 """
-import cv2
 import numpy as np
 from typing import List, Dict, Optional
 import logging
 import traceback
-from stream_handler import RTSPStreamHandler
+from ffmpeg_stream_handler import FFmpegStreamHandler
+from PIL import Image, ImageDraw, ImageFont
 
 logger = logging.getLogger(__name__)
 
@@ -44,11 +44,11 @@ class VideoWallDisplay:
         self.cell_width = output_width // cols
         self.cell_height = output_height // rows
         
-        # Initialize stream handlers
-        self.handlers: Dict[int, Optional[RTSPStreamHandler]] = {}
+        # Initialize stream handlers using FFmpeg
+        self.handlers: Dict[int, Optional[FFmpegStreamHandler]] = {}
         for i, stream_url in enumerate(self.streams):
             if stream_url:
-                self.handlers[i] = RTSPStreamHandler(stream_url, i)
+                self.handlers[i] = FFmpegStreamHandler(stream_url, i)
             else:
                 self.handlers[i] = None
         
@@ -82,25 +82,33 @@ class VideoWallDisplay:
         logger.info("All streams stopped")
     
     def _create_placeholder(self, width: int, height: int, text: str) -> np.ndarray:
-        """Create a placeholder image for empty or missing streams"""
+        """Create a placeholder image for empty or missing streams using PIL"""
+        # Create numpy array with dark gray background
         placeholder = np.zeros((height, width, 3), dtype=np.uint8)
         placeholder[:] = (50, 50, 50)  # Dark gray background
         
-        # Add text
-        font = cv2.FONT_HERSHEY_SIMPLEX
-        font_scale = 1.0
-        thickness = 2
-        color = (200, 200, 200)
+        # Convert to PIL Image (RGB)
+        pil_image = Image.fromarray(placeholder[:, :, ::-1])  # BGR to RGB
+        draw = ImageDraw.Draw(pil_image)
         
-        # Get text size to center it
-        text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
-        text_x = (width - text_size[0]) // 2
-        text_y = (height + text_size[1]) // 2
+        # Add text using PIL
+        try:
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 24)
+        except:
+            font = ImageFont.load_default()
         
-        cv2.putText(placeholder, text, (text_x, text_y), font, 
-                   font_scale, color, thickness)
+        # Get text bounding box to center it
+        bbox = draw.textbbox((0, 0), text, font=font)
+        text_width = bbox[2] - bbox[0]
+        text_height = bbox[3] - bbox[1]
         
-        return placeholder
+        text_x = (width - text_width) // 2
+        text_y = (height - text_height) // 2
+        
+        draw.text((text_x, text_y), text, font=font, fill=(200, 200, 200))
+        
+        # Convert back to numpy array (BGR)
+        return np.array(pil_image)[:, :, ::-1]
     
     def _resize_frame(self, frame: Optional[np.ndarray], width: int, 
                      height: int, cell_index: int) -> np.ndarray:
@@ -124,7 +132,9 @@ class VideoWallDisplay:
                 new_height = height
                 new_width = int(height * frame_aspect)
             
-            resized = cv2.resize(frame, (new_width, new_height))
+            resized_pil = Image.fromarray(frame[:, :, ::-1])  # BGR to RGB
+            resized_pil = resized_pil.resize((new_width, new_height), Image.Resampling.LANCZOS)
+            resized = np.array(resized_pil)[:, :, ::-1]  # RGB to BGR
             
             # Create output frame with padding
             output = np.zeros((height, width, 3), dtype=np.uint8)
@@ -161,10 +171,19 @@ class VideoWallDisplay:
             wall[y_start:y_start + self.cell_height, 
                  x_start:x_start + self.cell_width] = cell_frame
             
-            # Add grid lines
-            cv2.rectangle(wall, (x_start, y_start), 
-                         (x_start + self.cell_width, y_start + self.cell_height),
-                         (200, 200, 200), 2)
+            # Add grid lines (draw rectangle using numpy)
+            thickness = 2
+            color = (200, 200, 200)
+            x_end = x_start + self.cell_width
+            y_end = y_start + self.cell_height
+            
+            # Draw top and bottom lines
+            wall[y_start:y_start + thickness, x_start:x_end] = color
+            wall[y_end - thickness:y_end, x_start:x_end] = color
+            
+            # Draw left and right lines
+            wall[y_start:y_end, x_start:x_start + thickness] = color
+            wall[y_start:y_end, x_end - thickness:x_end] = color
         
         return wall
     

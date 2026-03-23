@@ -1,5 +1,5 @@
 """
-Video Wall Recorder - Orchestrates multi-stream recording with rotation
+Video Wall Recorder - Orchestrates multi-stream recording with rotation using FFmpeg
 """
 import threading
 import time
@@ -8,7 +8,7 @@ import os
 import logging
 from pathlib import Path
 from typing import List, Dict, Optional
-from stream_recorder import StreamRecorder
+from ffmpeg_recorder import FFmpegStreamRecorder
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -60,15 +60,15 @@ class VideoWallRecorder:
                 for stream_id, stream_source in streams_dict.items():
                     stream_output_dir = os.path.join(self.output_dir, f"stream_{stream_id}")
                     
-                    recorder = StreamRecorder(
+                    recorder = FFmpegStreamRecorder(
                         stream_source=stream_source,
                         stream_id=stream_id,
-                        output_dir=stream_output_dir,
-                        chunk_duration_minutes=self.chunk_duration_minutes,
-                        total_rotation_minutes=self.total_rotation_minutes,
+                        output_directory=stream_output_dir,
                         fps=self.fps,
                         width=self.width,
-                        height=self.height
+                        height=self.height,
+                        chunk_duration_minutes=self.chunk_duration_minutes,
+                        total_rotation_minutes=self.total_rotation_minutes
                     )
                     recorder.start()
                     self.recording_threads[stream_id] = recorder

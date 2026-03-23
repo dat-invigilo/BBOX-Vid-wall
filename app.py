@@ -1,9 +1,8 @@
 """
 Video Wall Application - Main application entry point
-Displays multiple RTSP streams in a grid with PyQt5 GUI
+Displays multiple RTSP streams in a grid with PyQt5 GUI using FFmpeg
 """
 import sys
-import cv2
 import logging
 from typing import List
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QLabel, QVBoxLayout, 
@@ -14,6 +13,7 @@ from PyQt5.QtCore import QTimer, Qt, QThread, pyqtSignal
 from video_wall import VideoWallDisplay
 import yaml
 import os
+import numpy as np
 
 # Setup logging
 logging.basicConfig(
@@ -41,8 +41,8 @@ class VideoWallThread(QThread):
                 # Get composite frame
                 wall_frame = self.video_wall.get_wall_frame()
                 
-                # Convert BGR to RGB for display
-                rgb_frame = cv2.cvtColor(wall_frame, cv2.COLOR_BGR2RGB)
+                # Convert BGR to RGB for display (reverse channel order)
+                rgb_frame = wall_frame[:, :, ::-1].copy()
                 
                 # Convert to QImage
                 h, w, ch = rgb_frame.shape

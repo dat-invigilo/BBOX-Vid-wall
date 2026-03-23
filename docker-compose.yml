@@ -8,14 +8,13 @@ services:
     container_name: bbox-video-wall
     image: bbox-vid-wall
     
+    # Use host network to access external RTSP streams
+    network_mode: host
+    
     # Environment variables
     environment:
       - PYTHONUNBUFFERED=1
       - FLASK_ENV=production
-    
-    # Port mappings - expose Flask on 5001
-    ports:
-      - "5001:5001"
     
     # Volume mounts
     volumes:
@@ -27,10 +26,6 @@ services:
       - ./recordings:/app/recordings:rw
       # Optional: persist logs
       - ./logs:/app/logs
-    
-    # Network
-    networks:
-      - video-wall-net
     
     # Resource limits
     deploy:
@@ -57,7 +52,3 @@ services:
       - ALL
     cap_add:
       - NET_BIND_SERVICE
-
-networks:
-  video-wall-net:
-    driver: bridge
