@@ -1,0 +1,15 @@
+cols: 2
+dev_mode: true
+performance:
+  buffer_size: 2
+  max_fps: 30
+  reconnect_delay: 2
+resolution: 1920x1080
+rows: 2
+streams:
+- rtsp://admin:password@192.168.1.100:554/stream1
+- rtsp://admin:password@192.168.1.101:554/stream1
+- rtsp://admin:password@192.168.1.102:554/stream1
+- rtsp://admin:password@192.168.1.103:554/stream1
+test_vids:
+- ./test_videos/14_uwah_1.mp4

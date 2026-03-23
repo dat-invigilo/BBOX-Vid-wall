@@ -1,0 +1,61 @@
+version: '3.8'
+
+services:
+  video-wall:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bbox-video-wall
+    image: bbox-vid-wall
+    
+    # Environment variables
+    environment:
+      - PYTHONUNBUFFERED=1
+      - FLASK_ENV=production
+    
+    # Port mappings - expose Flask on 5000
+    ports:
+      - "5000:5000"
+    
+    # Volume mounts
+    volumes:
+      # Config files
+      - ./config.yaml:/app/config.yaml:rw
+      # Test videos for dev mode
+      - ./test_videos:/app/test_videos:ro
+      # Optional: persist logs
+      - ./logs:/app/logs
+    
+    # Network
+    networks:
+      - video-wall-net
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
+    
+    # Restart policy
+    restart: unless-stopped
+    
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    
+    # Security options
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+
+networks:
+  video-wall-net:
+    driver: bridge
