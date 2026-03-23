@@ -1,15 +1,50 @@
-cols: 2
-dev_mode: true
-performance:
-  buffer_size: 2
-  max_fps: 30
-  reconnect_delay: 2
-resolution: 1920x1080
-rows: 2
-streams:
-- rtsp://admin:password@192.168.1.100:554/stream1
-- rtsp://admin:password@192.168.1.101:554/stream1
-- rtsp://admin:password@192.168.1.102:554/stream1
-- rtsp://admin:password@192.168.1.103:554/stream1
+# Video Wall Configuration
+# List of RTSP camera streams to display
+
+# Development Mode
+dev_mode: true  # Set to true to use test videos instead of RTSP streams
+
+# Test Videos (used when dev_mode is true)
+# Add local video file paths here for testing
 test_vids:
-- ./test_videos/14_uwah_1.mp4
+  - './test_videos/14_uwah_1.mp4'
+
+# Grid layout
+cols: 2  # Number of columns (1-4)
+rows: 2  # Number of rows (1-4)
+
+# Output resolution
+resolution: '1920x1080'  # Options: 1920x1080, 1280x720, 2560x1440
+
+# RTSP streams to display (used when dev_mode is false)
+# Add your camera stream URLs here
+streams:
+  - 'rtsp://admin:password@192.168.1.100:554/stream1'
+  - 'rtsp://admin:password@192.168.1.101:554/stream1'
+  - 'rtsp://admin:password@192.168.1.102:554/stream1'
+  - 'rtsp://admin:password@192.168.1.103:554/stream1'
+
+# Performance tuning
+performance:
+  buffer_size: 2  # Frame buffer size per stream
+  max_fps: 30     # Maximum FPS for display
+  reconnect_delay: 2  # Seconds to wait before reconnecting failed streams
+
+# Save Mode - Video Recording
+save_mode:
+  enabled: false
+  output_directory: './recordings'
+  
+  # Recording parameters
+  fps: 30
+  recording_width: 1920
+  recording_height: 1080
+  
+  # Rotation policy (in minutes)
+  chunk_duration_minutes: 60    # Duration of each MP4 file (1 hour)
+  total_rotation_minutes: 1440  # Total rotation cycle (24 hours = 1440 minutes)
+  
+  # Cleanup/retention
+  cleanup_incomplete: true
+  disk_space_alert_gb: 10
+

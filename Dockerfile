@@ -26,6 +26,8 @@ COPY app.py .
 COPY video_wall.py .
 COPY stream_handler.py .
 COPY web_server.py .
+COPY video_recorder.py .
+COPY stream_recorder.py .
 COPY config.yaml .
 COPY templates/ ./templates/
 

@@ -23,6 +23,8 @@ services:
       - ./config.yaml:/app/config.yaml:rw
       # Test videos for dev mode
       - ./test_videos:/app/test_videos:ro
+      # Recordings for save mode
+      - ./recordings:/app/recordings:rw
       # Optional: persist logs
       - ./logs:/app/logs
     

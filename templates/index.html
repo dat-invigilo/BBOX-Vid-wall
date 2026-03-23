@@ -429,6 +429,46 @@
                     </div>
                 </div>
 
+                <!-- Save Mode Recording -->
+                <div class="section">
+                    <div class="section-title">Recording (Save Mode)</div>
+                    
+                    <div class="form-group checkbox-group">
+                        <input type="checkbox" id="saveModeEnable">
+                        <label for="saveModeEnable" style="margin: 0;">Enable Recording</label>
+                    </div>
+
+                    <div id="saveModeControls" style="display: none;">
+                        <!-- Stream Selection -->
+                        <div style="margin-bottom: 10px;">
+                            <label style="font-weight: 500; font-size: 12px; color: #666;">Select Streams to Record:</label>
+                            <div id="streamCheckboxes" style="margin-top: 8px; max-height: 150px; overflow-y: auto;"></div>
+                        </div>
+
+                        <!-- Recording Info -->
+                        <div id="recordingInfo" style="display: none; background: #f9f9f9; padding: 8px; border-radius: 5px; font-size: 11px; margin-bottom: 10px;">
+                            <div><strong>Chunk Duration:</strong> <span id="chunkDurInfo">60</span> min</div>
+                            <div><strong>Rotation Cycle:</strong> <span id="rotationInfo">24</span> hours</div>
+                            <div><strong>Status:</strong> <span id="recordingStatusInfo">Idle</span></div>
+                            <div><strong>Disk Usage:</strong> <span id="diskUsageInfo">0</span> GB</div>
+                        </div>
+
+                        <!-- Recording Controls -->
+                        <div class="button-group">
+                            <button class="btn-primary btn-small" id="recordStartBtn" onclick="startRecording()">Record</button>
+                            <button class="btn-danger btn-small" id="recordStopBtn" onclick="stopRecording()" disabled>Stop</button>
+                        </div>
+
+                        <!-- Recordings List -->
+                        <div id="recordingsList" style="margin-top: 10px; font-size: 11px;">
+                            <div style="font-weight: 500; margin-bottom: 5px;">📁 Recorded Files:</div>
+                            <div id="filesListContainer" style="max-height: 150px; overflow-y: auto; border: 1px solid #eee; border-radius: 5px; padding: 5px;">
+                                <div style="color: #999; text-align: center; padding: 10px;">No files yet</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Settings -->
                 <div class="section">
                     <div class="button-group">
@@ -596,6 +636,138 @@
             .then(() => showMessage('Configuration saved', 'success'))
             .catch(e => showMessage(`Error saving config: ${e.message}`, 'error'));
         }
+
+        function updateDevModeUI() {
+            const devMode = document.getElementById('devMode').checked;
+            document.getElementById('streams').style.display = devMode ? 'none' : 'block';
+            document.getElementById('testVidsSection').style.display = devMode ? 'block' : 'none';
+            document.getElementById('streamsLabel').textContent = devMode ? 'Test Videos' : 'RTSP Streams';
+        }
+
+        // Save Mode Recording Functions
+        function loadSaveModeConfig() {
+            fetch(`${API_BASE}/api/save-mode/config`)
+                .then(r => r.json())
+                .then(data => {
+                    const config = data.save_mode_config || {};
+                    const streams = data.available_streams || [];
+
+                    document.getElementById('chunkDurInfo').textContent = config.chunk_duration_minutes || 60;
+                    document.getElementById('rotationInfo').textContent = Math.round((config.total_rotation_minutes || 1440) / 60);
+
+                    // Build stream checkboxes
+                    const container = document.getElementById('streamCheckboxes');
+                    container.innerHTML = '';
+                    streams.forEach((stream, idx) => {
+                        const streamName = stream.split('/').pop() || `Stream ${idx}`;
+                        const html = `
+                            <div style="margin-bottom: 5px;">
+                                <input type="checkbox" id="streamCheck_${idx}" value="${idx}">
+                                <label for="streamCheck_${idx}" style="margin: 0; font-size: 11px;">${streamName}</label>
+                            </div>
+                        `;
+                        container.insertAdjacentHTML('beforeend', html);
+                    });
+
+                    updateRecordingStatus();
+                })
+                .catch(e => console.error('Error loading save mode config:', e));
+        }
+
+        function updateRecordingStatus() {
+            fetch(`${API_BASE}/api/save-mode/status`)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.recording) {
+                        document.getElementById('recordStartBtn').disabled = true;
+                        document.getElementById('recordStopBtn').disabled = false;
+                        document.getElementById('recordingStatusInfo').textContent = `Recording ${data.streams ? Object.keys(data.streams).length : 0} streams`;
+                    } else {
+                        document.getElementById('recordStartBtn').disabled = false;
+                        document.getElementById('recordStopBtn').disabled = true;
+                        document.getElementById('recordingStatusInfo').textContent = 'Idle';
+                    }
+
+                    if (data.disk_usage_gb !== undefined) {
+                        document.getElementById('diskUsageInfo').textContent = data.disk_usage_gb;
+                    }
+
+                    // Update recordings list
+                    if (data.recordings) {
+                        updateRecordingsList(data.recordings);
+                    }
+                })
+                .catch(e => console.error('Error updating recording status:', e));
+        }
+
+        function updateRecordingsList(recordings) {
+            const container = document.getElementById('filesListContainer');
+            let html = '';
+            let fileCount = 0;
+
+            for (const [streamId, files] of Object.entries(recordings)) {
+                if (files && files.length > 0) {
+                    html += `<div style="margin-bottom: 8px; border-bottom: 1px solid #eee; padding-bottom: 5px;">`;
+                    html += `<strong>Stream ${streamId}:</strong><br>`;
+                    files.forEach(file => {
+                        fileCount++;
+                        html += `<div style="padding-left: 10px; font-size: 10px;">📄 ${file.filename} (${file.size_mb.toFixed(1)}MB)</div>`;
+                    });
+                    html += `</div>`;
+                }
+            }
+
+            if (fileCount === 0) {
+                html = '<div style="color: #999; text-align: center; padding: 10px;">No files yet</div>';
+            }
+
+            container.innerHTML = html;
+        }
+
+        function startRecording() {
+            // Get selected streams
+            const checkboxes = document.querySelectorAll('#streamCheckboxes input[type="checkbox"]:checked');
+            const selectedIndices = Array.from(checkboxes).map(cb => parseInt(cb.value));
+
+            if (selectedIndices.length === 0) {
+                showMessage('Please select at least one stream to record', 'error');
+                return;
+            }
+
+            fetch(`${API_BASE}/api/save-mode/start`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ stream_indices: selectedIndices })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'recording') {
+                    showMessage(`Recording started for ${data.streams.length} stream(s)`, 'success');
+                    updateRecordingStatus();
+                } else {
+                    showMessage(data.error || 'Failed to start recording', 'error');
+                }
+            })
+            .catch(e => showMessage(`Error: ${e.message}`, 'error'));
+        }
+
+        function stopRecording() {
+            fetch(`${API_BASE}/api/save-mode/stop`, { method: 'POST' })
+                .then(r => r.json())
+                .then(data => {
+                    showMessage(`Recording stopped. ${data.total_files} file(s) saved.`, 'success');
+                    updateRecordingStatus();
+                })
+                .catch(e => showMessage(`Error: ${e.message}`, 'error'));
+        }
+
+        // Toggle Save Mode section
+        document.getElementById('saveModeEnable').addEventListener('change', function() {
+            document.getElementById('saveModeControls').style.display = this.checked ? 'block' : 'none';
+            if (this.checked) {
+                loadSaveModeConfig();
+            }
+        });
 
         function updateDevModeUI() {
             const devMode = document.getElementById('devMode').checked;

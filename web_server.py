@@ -4,11 +4,13 @@ Serves video wall display via HTTP streaming
 """
 import cv2
 import threading
-from flask import Flask, render_template, Response, jsonify, request
+from flask import Flask, render_template, Response, jsonify, request, send_file
 from video_wall import VideoWallDisplay
+from video_recorder import VideoWallRecorder
 import logging
 import yaml
 import os
+from io import BytesIO
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -20,6 +22,7 @@ app.config['JSON_SORT_KEYS'] = False
 video_wall = None
 wall_thread = None
 is_running = False
+recorder = None
 config_file = 'config.yaml'
 
 
@@ -208,6 +211,17 @@ def api_set_config():
                 'buffer_size': 2,
                 'max_fps': 30,
                 'reconnect_delay': 2
+            }),
+            'save_mode': data.get('save_mode', {
+                'enabled': False,
+                'output_directory': './recordings',
+                'fps': 30,
+                'recording_width': 1920,
+                'recording_height': 1080,
+                'chunk_duration_minutes': 60,
+                'total_rotation_minutes': 1440,
+                'cleanup_incomplete': True,
+                'disk_space_alert_gb': 10
             })
         }
         
@@ -217,6 +231,173 @@ def api_set_config():
         return jsonify({'status': 'saved'})
     except Exception as e:
         logger.error(f"Error in api_set_config: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+
+# ============================================================================
+# Save Mode - Recording Endpoints
+# ============================================================================
+
+@app.route('/api/save-mode/config', methods=['GET'])
+def api_savemode_config():
+    """Get available streams for recording"""
+    config = load_config()
+    streams, dev_mode = get_streams_from_config()
+    
+    return jsonify({
+        'dev_mode': dev_mode,
+        'available_streams': streams,
+        'save_mode_config': config.get('save_mode', {})
+    })
+
+
+@app.route('/api/save-mode/start', methods=['POST'])
+def api_savemode_start():
+    """Start recording selected streams"""
+    global recorder
+    
+    try:
+        data = request.get_json() or {}
+        selected_indices = data.get('stream_indices', [])
+        
+        config = load_config()
+        streams, dev_mode = get_streams_from_config()
+        
+        if not selected_indices:
+            return jsonify({'error': 'No streams selected'}), 400
+        
+        # Build streams dict from selected indices
+        streams_dict = {}
+        for idx in selected_indices:
+            if 0 <= idx < len(streams):
+                streams_dict[idx] = streams[idx]
+        
+        if not streams_dict:
+            return jsonify({'error': 'Invalid stream indices'}), 400
+        
+        # Get save mode config
+        save_config = config.get('save_mode', {})
+        output_dir = save_config.get('output_directory', './recordings')
+        chunk_minutes = save_config.get('chunk_duration_minutes', 60)
+        rotation_minutes = save_config.get('total_rotation_minutes', 1440)
+        fps = save_config.get('fps', 30)
+        width = save_config.get('recording_width', 1920)
+        height = save_config.get('recording_height', 1080)
+        
+        # Create and start recorder
+        recorder = VideoWallRecorder(
+            output_dir=output_dir,
+            chunk_duration_minutes=chunk_minutes,
+            total_rotation_minutes=rotation_minutes,
+            fps=fps,
+            width=width,
+            height=height
+        )
+        
+        success = recorder.start_recording(streams_dict)
+        
+        if success:
+            return jsonify({
+                'status': 'recording',
+                'streams': list(streams_dict.keys()),
+                'chunk_duration_min': chunk_minutes,
+                'rotation_hours': rotation_minutes // 60
+            })
+        else:
+            return jsonify({'error': 'Failed to start recording'}), 500
+            
+    except Exception as e:
+        logger.error(f"Error in api_savemode_start: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/save-mode/stop', methods=['POST'])
+def api_savemode_stop():
+    """Stop recording"""
+    global recorder
+    
+    try:
+        if not recorder or not recorder.is_recording:
+            return jsonify({'error': 'No recording in progress'}), 400
+        
+        recorder.stop_recording()
+        recordings = recorder.list_recordings()
+        
+        return jsonify({
+            'status': 'stopped',
+            'total_files': sum(len(files) for files in recordings.values()),
+            'recordings': recordings
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in api_savemode_stop: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/save-mode/status', methods=['GET'])
+def api_savemode_status():
+    """Get recording status"""
+    global recorder
+    
+    try:
+        if not recorder:
+            return jsonify({'recording': False})
+        
+        status = recorder.get_status()
+        status['disk_usage_gb'] = recorder.get_disk_usage()
+        status['recordings'] = recorder.list_recordings()
+        
+        return jsonify(status)
+        
+    except Exception as e:
+        logger.error(f"Error in api_savemode_status: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/save-mode/files', methods=['GET'])
+def api_savemode_files():
+    """List all recorded files"""
+    global recorder
+    
+    try:
+        if not recorder:
+            return jsonify({'recordings': {}})
+        
+        recordings = recorder.list_recordings()
+        disk_usage = recorder.get_disk_usage()
+        
+        return jsonify({
+            'recordings': recordings,
+            'disk_usage_gb': disk_usage,
+            'total_files': sum(len(files) for files in recordings.values())
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in api_savemode_files: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/save-mode/download', methods=['GET'])
+def api_savemode_download():
+    """Download a recorded file"""
+    try:
+        file_path = request.args.get('file_path')
+        
+        if not file_path or not os.path.exists(file_path):
+            return jsonify({'error': 'File not found'}), 404
+        
+        # Verify file is within recordings directory
+        recordings_dir = os.path.abspath('./recordings')
+        file_abs = os.path.abspath(file_path)
+        
+        if not file_abs.startswith(recordings_dir):
+            return jsonify({'error': 'Invalid file path'}), 403
+        
+        filename = os.path.basename(file_path)
+        return send_file(file_path, as_attachment=True, download_name=filename)
+        
+    except Exception as e:
+        logger.error(f"Error in api_savemode_download: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 
