@@ -19,7 +19,7 @@ resolution: '1920x1080'  # Options: 1920x1080, 1280x720, 2560x1440
 # RTSP streams to display (used when dev_mode is false)
 # Add your camera stream URLs here
 streams:
-  - 'rtsp://100.77.175.81:7001/ds-test'
+  - 'rtsp://localhost:7001/ds-test'
 
 # Performance tuning
 performance:

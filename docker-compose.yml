@@ -26,6 +26,8 @@ services:
       - ./recordings:/app/recordings:rw
       # Optional: persist logs
       - ./logs:/app/logs
+      # Shared volume from host
+      - /home/invigilo/shared_volume:/app/shared_volume:ro
     
     # Resource limits
     deploy:

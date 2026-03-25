@@ -4,330 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>BBOX Video Wall</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            display: flex;
-            color: #333;
-        }
-
-        .container {
-            display: flex;
-            width: 100%;
-            height: 100vh;
-            gap: 20px;
-            padding: 20px;
-        }
-
-        .sidebar {
-            width: 350px;
-            background: white;
-            border-radius: 10px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-            display: flex;
-            flex-direction: column;
-            overflow-y: auto;
-        }
-
-        .main-content {
-            flex: 1;
-            background: white;
-            border-radius: 10px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-        }
-
-        .header {
-            padding: 20px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border-radius: 10px 10px 0 0;
-        }
-
-        .header h1 {
-            font-size: 24px;
-            margin-bottom: 5px;
-        }
-
-        .header p {
-            font-size: 14px;
-            opacity: 0.9;
-        }
-
-        .content {
-            padding: 20px;
-            display: flex;
-            flex-direction: column;
-            gap: 15px;
-            overflow-y: auto;
-        }
-
-        .section {
-            border-bottom: 1px solid #eee;
-            padding-bottom: 15px;
-        }
-
-        .section:last-child {
-            border-bottom: none;
-        }
-
-        .section-title {
-            font-weight: 600;
-            font-size: 14px;
-            color: #667eea;
-            text-transform: uppercase;
-            margin-bottom: 10px;
-        }
-
-        .status-indicator {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            padding: 8px 12px;
-            background: #f0f0f0;
-            border-radius: 20px;
-            font-size: 13px;
-            margin-bottom: 10px;
-        }
-
-        .status-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: #ccc;
-        }
-
-        .status-dot.running {
-            background: #4CAF50;
-            animation: pulse 2s infinite;
-        }
-
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
-        }
-
-        .form-group {
-            margin-bottom: 12px;
-        }
-
-        label {
-            display: block;
-            font-size: 13px;
-            font-weight: 500;
-            margin-bottom: 5px;
-            color: #555;
-        }
-
-        input[type="text"],
-        input[type="number"],
-        select,
-        textarea {
-            width: 100%;
-            padding: 8px 10px;
-            border: 1px solid #ddd;
-            border-radius: 5px;
-            font-size: 13px;
-            font-family: monospace;
-        }
-
-        input[type="text"]:focus,
-        input[type="number"]:focus,
-        select:focus,
-        textarea:focus {
-            outline: none;
-            border-color: #667eea;
-            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
-        }
-
-        textarea {
-            resize: vertical;
-            min-height: 80px;
-            font-size: 12px;
-        }
-
-        .checkbox-group {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        input[type="checkbox"] {
-            width: 16px;
-            height: 16px;
-            cursor: pointer;
-        }
-
-        .grid-controls {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 10px;
-        }
-
-        .button-group {
-            display: flex;
-            gap: 10px;
-            margin-top: 15px;
-            flex-wrap: wrap;
-        }
-
-        button {
-            flex: 1;
-            min-width: 100px;
-            padding: 10px 15px;
-            border: none;
-            border-radius: 5px;
-            font-size: 13px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        .btn-primary {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-        }
-
-        .btn-primary:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
-        }
-
-        .btn-primary:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-            transform: none;
-        }
-
-        .btn-secondary {
-            background: #f0f0f0;
-            color: #333;
-        }
-
-        .btn-secondary:hover {
-            background: #e0e0e0;
-        }
-
-        .btn-danger {
-            background: #f44336;
-            color: white;
-        }
-
-        .btn-danger:hover {
-            background: #d32f2f;
-        }
-
-        .btn-small {
-            padding: 6px 10px;
-            font-size: 12px;
-            min-width: auto;
-        }
-
-        .video-container {
-            flex: 1;
-            background: #000;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            position: relative;
-            overflow: hidden;
-            border-radius: 0 0 10px 0;
-        }
-
-        .video-feed {
-            max-width: 100%;
-            max-height: 100%;
-            object-fit: contain;
-        }
-
-        .placeholder {
-            color: #999;
-            text-align: center;
-        }
-
-        .placeholder-icon {
-            font-size: 48px;
-            margin-bottom: 10px;
-        }
-
-        .message {
-            padding: 10px 12px;
-            border-radius: 5px;
-            font-size: 13px;
-            margin-bottom: 10px;
-        }
-
-        .message.info {
-            background: #e3f2fd;
-            color: #1976d2;
-            border-left: 4px solid #1976d2;
-        }
-
-        .message.error {
-            background: #ffebee;
-            color: #c62828;
-            border-left: 4px solid #c62828;
-        }
-
-        .message.success {
-            background: #e8f5e9;
-            color: #2e7d32;
-            border-left: 4px solid #2e7d32;
-        }
-
-        @media (max-width: 1200px) {
-            .container {
-                flex-direction: column;
-                height: auto;
-            }
-
-            .sidebar {
-                width: 100%;
-                max-height: 300px;
-            }
-
-            .main-content {
-                flex: 1;
-                min-height: 400px;
-            }
-        }
-
-        .info-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 10px;
-            font-size: 12px;
-        }
-
-        .info-item {
-            background: #f5f5f5;
-            padding: 8px;
-            border-radius: 5px;
-        }
-
-        .info-label {
-            color: #999;
-            font-weight: 500;
-        }
-
-        .info-value {
-            color: #333;
-            font-weight: 600;
-            margin-top: 3px;
-        }
-    </style>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
     <div class="container">
@@ -375,11 +52,11 @@
                     <div class="grid-controls">
                         <div class="form-group">
                             <label>Columns</label>
-                            <input type="number" id="cols" value="2" min="1" max="4">
+                            <input type="number" id="cols" value="2" min="1" max="3">
                         </div>
                         <div class="form-group">
                             <label>Rows</label>
-                            <input type="number" id="rows" value="2" min="1" max="4">
+                            <input type="number" id="rows" value="2" min="1" max="100">
                         </div>
                     </div>
                 </div>
@@ -405,9 +82,22 @@
                     </div>
                 </div>
 
+                <!-- BBOX Mode -->
+                <div class="section">
+                    <div class="section-title">Stream Mode</div>
+                    <div class="form-group checkbox-group">
+                        <input type="checkbox" id="bboxMode">
+                        <label for="bboxMode" style="margin: 0;">BBOX_ON mode (localhost ports)</label>
+                    </div>
+                    <p style="color: #999; font-size: 12px; margin-top: 5px;">
+                        When enabled, uses localhost:7000+ ports. When disabled, uses deepstream URIs.
+                    </p>
+                </div>
+
                 <!-- Streams -->
                 <div class="section">
                     <div class="section-title" id="streamsLabel">RTSP Streams</div>
+                    <button class="btn-secondary btn-small" onclick="reloadStreams()" style="width: 100%; margin-bottom: 10px;">🔄 Reload Streams</button>
                     <div class="form-group">
                         <textarea id="streams" placeholder="rtsp://camera1/stream&#10;rtsp://camera2/stream"></textarea>
                     </div>
@@ -524,6 +214,7 @@
                         videoFeed.style.display = 'block';
                         document.getElementById('startBtn').disabled = true;
                         document.getElementById('stopBtn').disabled = false;
+                        document.getElementById('stopBtn').textContent = 'Stop';
                     } else {
                         statusDot.classList.remove('running');
                         statusText.textContent = 'Stopped';
@@ -531,6 +222,7 @@
                         videoFeed.style.display = 'none';
                         document.getElementById('startBtn').disabled = false;
                         document.getElementById('stopBtn').disabled = true;
+                        document.getElementById('stopBtn').textContent = 'Stop';
                     }
 
                     if (data.running) {
@@ -599,6 +291,8 @@
                     const statusText = document.getElementById('statusText');
                     
                     placeholder.style.display = 'none';
+                    // Force refresh of the video feed image with a cache-busting timestamp
+                    videoFeed.src = `${API_BASE}/video_feed?t=${new Date().getTime()}`;
                     videoFeed.style.display = 'block';
                     statusDot.classList.add('running');
                     statusText.textContent = 'Running';
@@ -619,13 +313,85 @@
         }
 
         function stopWall() {
+            const stopBtn = document.getElementById('stopBtn');
+            const videoFeed = document.getElementById('videoFeed');
+            const placeholder = document.getElementById('placeholder');
+            
+            stopBtn.disabled = true;
+            stopBtn.textContent = 'Stopping...';
+            
+            // Immediately clear video feed source to break the browser connection
+            videoFeed.style.display = 'none';
+            videoFeed.src = '';
+            
             fetch(`${API_BASE}/api/stop`, { method: 'POST' })
                 .then(r => r.json())
                 .then(() => {
                     showMessage('Video wall stopped', 'info');
+                    placeholder.style.display = 'block';
                     updateStatus();
                 })
-                .catch(e => showMessage(`Error: ${e.message}`, 'error'));
+                .catch(e => {
+                    showMessage(`Error: ${e.message}`, 'error');
+                    stopBtn.textContent = 'Stop';
+                    stopBtn.disabled = false;
+                });
+        }
+
+        function stopAndReloadStreams() {
+            /**
+             * Stop current streams and reload new ones (for BBOX_ON toggle)
+             * Does NOT auto-start - user must click Start button
+             */
+            console.log('[stopAndReloadStreams] Stopping current streams and loading new ones');
+            
+            // Get current mode values IMMEDIATELY
+            const devMode = document.getElementById('devMode').checked;
+            const bboxMode = document.getElementById('bboxMode').checked;
+            console.log('[stopAndReloadStreams] Config: devMode=', devMode, 'bboxMode=', bboxMode);
+            
+            // First, stop the wall if running
+            fetch(`${API_BASE}/api/status`)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.running) {
+                        console.log('[stopAndReloadStreams] Wall is running, stopping...');
+                        return fetch(`${API_BASE}/api/stop`, { method: 'POST' });
+                    } else {
+                        console.log('[stopAndReloadStreams] Wall not running');
+                        return Promise.resolve();
+                    }
+                })
+                .then(() => {
+                    // Wait longer for full cleanup and process termination
+                    console.log('[stopAndReloadStreams] Waiting for cleanup...');
+                    return new Promise(resolve => setTimeout(resolve, 1000));
+                })
+                .then(() => {
+                    console.log('[stopAndReloadStreams] Reloading streams with devMode=', devMode, 'bboxMode=', bboxMode);
+                    // Reload streams with new mode
+                    const url = `${API_BASE}/api/streams?dev_mode=${devMode}&bbox_on=${bboxMode}`;
+                    console.log('[stopAndReloadStreams] Fetching from:', url);
+                    return fetch(url).then(r => r.json());
+                })
+                .then(data => {
+                    console.log('[stopAndReloadStreams] Got', data.streams.length, 'streams:', data.streams);
+                    
+                    // Clear the video display to ensure old frames don't show
+                    const videoFeed = document.getElementById('videoFeed');
+                    videoFeed.style.display = 'none';
+                    
+                    // Update streams display
+                    document.getElementById('streams').value = data.streams.join('\n');
+                    
+                    let mode = devMode ? 'test videos' : (bboxMode ? 'BBOX_ON (localhost)' : 'deepstream URIs');
+                    showMessage(`Ready to start with ${data.streams.length} stream(s) from ${mode}. Click Start to begin.`, 'success');
+                    updateStatus();
+                })
+                .catch(e => {
+                    console.error('[stopAndReloadStreams] Error:', e);
+                    showMessage(`Error: ${e.message}`, 'error');
+                });
         }
 
         function loadConfig() {
@@ -821,12 +587,81 @@
             loadSaveModeConfig();
         }
 
+        function reloadStreams() {
+            const devMode = document.getElementById('devMode').checked;
+            const bboxMode = document.getElementById('bboxMode').checked;
+            
+            showMessage('Loading streams...', 'info');
+            
+            fetch(`${API_BASE}/api/streams?dev_mode=${devMode}&bbox_on=${bboxMode}`)
+                .then(r => r.json())
+                .then(data => {
+                    const streamsText = data.streams.join('\n');
+                    document.getElementById('streams').value = streamsText;
+                    
+                    let mode = devMode ? 'test videos' : (bboxMode ? 'BBOX_ON (localhost)' : 'deepstream URIs');
+                    showMessage(`Loaded ${data.streams.length} stream(s) from ${mode}`, 'success');
+                })
+                .catch(e => {
+                    console.error('Error loading streams:', e);
+                    showMessage(`Error loading streams: ${e.message}`, 'error');
+                });
+        }
+
         // Event listeners
-        document.getElementById('devMode').addEventListener('change', updateDevModeUI);
+        document.getElementById('devMode').addEventListener('change', function() {
+            updateDevModeUI();
+            reloadStreams();
+        });
+        
+        document.getElementById('bboxMode').addEventListener('change', function() {
+            console.log('[bboxMode change] BBOX_ON toggled to:', this.checked);
+            // Update backend
+            fetch(`${API_BASE}/api/bbox-mode`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ bbox_on: this.checked })
+            })
+            .then(r => r.json())
+            .then(data => {
+                showMessage(`BBOX_ON mode: ${this.checked ? 'ENABLED' : 'DISABLED'}`, 'success');
+                // Stop current streams and load new ones (but don't auto-start)
+                stopAndReloadStreams();
+            })
+            .catch(e => {
+                console.error('Error updating BBOX mode:', e);
+                showMessage(`Error: ${e.message}`, 'error');
+                // Revert checkbox on error
+                this.checked = !this.checked;
+            });
+        });
 
         // Initialize
         window.addEventListener('load', () => {
-            loadConfig();
+            // First load config
+            fetch(`${API_BASE}/api/config`)
+                .then(r => r.json())
+                .then(config => {
+                    document.getElementById('cols').value = config.cols || 2;
+                    document.getElementById('rows').value = config.rows || 2;
+                    document.getElementById('resolution').value = config.resolution || '1920x1080';
+                    document.getElementById('devMode').checked = config.dev_mode || false;
+                    document.getElementById('testVids').value = (config.test_vids || []).join('\n');
+                    updateDevModeUI();
+                })
+                .catch(e => console.error('Error loading config:', e));
+            
+            // Then load BBOX_ON state and streams
+            fetch(`${API_BASE}/api/bbox-mode`)
+                .then(r => r.json())
+                .then(data => {
+                    document.getElementById('bboxMode').checked = data.bbox_on || false;
+                    // Load streams with current mode
+                    setTimeout(reloadStreams, 300);
+                })
+                .catch(e => console.error('Error loading BBOX mode:', e));
+            
+            // Status checks
             updateStatus();
             statusCheckInterval = setInterval(updateStatus, 2000);
         });

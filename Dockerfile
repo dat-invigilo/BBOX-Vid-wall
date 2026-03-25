@@ -26,6 +26,7 @@ COPY video_recorder.py .
 COPY ffmpeg_recorder.py .
 COPY config.yaml .
 COPY templates/ ./templates/
+COPY static/ ./static/
 
 ENV PYTHONUNBUFFERED=1
 ENV FLASK_ENV=production

@@ -41,8 +41,14 @@ class VideoWallDisplay:
         self.streams = self.streams[:self.total_cells]
         
         # Calculate cell dimensions
-        self.cell_width = output_width // cols
-        self.cell_height = output_height // rows
+        # Logic: Fixed cell size based on a 3x4 grid relative to the output dimensions
+        # This ensures that even with 1 row or 100 rows, each stream is the same size.
+        self.cell_width = output_width // 3
+        self.cell_height = output_height // 4
+        
+        # Override output_width/height to accommodate all rows/cols at this fixed size
+        self.output_width = self.cell_width * cols
+        self.output_height = self.cell_height * rows
         
         # Initialize stream handlers using FFmpeg
         self.handlers: Dict[int, Optional[FFmpegStreamHandler]] = {}
@@ -111,10 +117,17 @@ class VideoWallDisplay:
         return np.array(pil_image)[:, :, ::-1]
     
     def _resize_frame(self, frame: Optional[np.ndarray], width: int, 
-                     height: int, cell_index: int) -> np.ndarray:
+                     height: int, cell_index: int, stream_state: str = None) -> np.ndarray:
         """Resize frame to fit cell while maintaining aspect ratio"""
+        # Check stream state first - prioritize placeholders until fully connected
+        if stream_state == "connecting" or stream_state is None:
+            return self._create_placeholder(width, height, "⏳ Loading...")
+        elif stream_state == "failed":
+            return self._create_placeholder(width, height, "Unable to connect")
+        
+        # If we are "connected" but have no frame yet, still show loading
         if frame is None:
-            return self._create_placeholder(width, height, f"No Signal - Cell {cell_index}")
+            return self._create_placeholder(width, height, "⏳ Loading...")
         
         try:
             # Calculate aspect ratio
@@ -158,16 +171,18 @@ class VideoWallDisplay:
             y_start = row * self.cell_height
             x_start = col * self.cell_width
             
-            # Get frame from handler
+            # Get frame and state from handler
             handler = self.handlers.get(idx)
             if handler:
                 frame = handler.get_frame()
+                stream_state = handler.stream_state
             else:
                 frame = None
+                stream_state = None
             
             # Resize and place frame
             cell_frame = self._resize_frame(frame, self.cell_width, 
-                                           self.cell_height, idx)
+                                           self.cell_height, idx, stream_state)
             wall[y_start:y_start + self.cell_height, 
                  x_start:x_start + self.cell_width] = cell_frame
             

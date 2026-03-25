@@ -35,6 +35,8 @@ class FFmpegStreamHandler:
         self.stream_width = 0
         self.stream_height = 0
         self.fps = 30  # Default FPS
+        self.connection_failed = False  # Flag to indicate permanent failure after 3 attempts
+        self.stream_state = "connecting"  # State: connecting, connected, or failed
         
     def _probe_stream(self) -> bool:
         """Use ffprobe to get stream information before attempting to read"""
@@ -205,7 +207,7 @@ class FFmpegStreamHandler:
                         
                         if attempt < max_connection_attempts - 1:
                             logger.info(f"Stream {self.stream_id}: Retrying in 5 seconds...")
-                            time.sleep(5)
+                             
                             break  # Try next attempt
                         else:
                             logger.error(f"Stream {self.stream_id}: Max connection attempts reached")
@@ -218,7 +220,7 @@ class FFmpegStreamHandler:
                         
                         if attempt < max_connection_attempts - 1:
                             logger.info(f"Stream {self.stream_id}: Retrying in 5 seconds...")
-                            time.sleep(5)
+                             
                             break  # Try next attempt
                         else:
                             logger.error(f"Stream {self.stream_id}: Max connection attempts reached")
@@ -244,7 +246,7 @@ class FFmpegStreamHandler:
                             
                             if attempt < max_connection_attempts - 1:
                                 logger.info(f"Stream {self.stream_id}: Retrying in 5 seconds...")
-                                time.sleep(5)
+                                 
                                 break
                             else:
                                 return False
@@ -254,7 +256,7 @@ class FFmpegStreamHandler:
                         
                         if attempt < max_connection_attempts - 1:
                             logger.info(f"Stream {self.stream_id}: Retrying in 5 seconds...")
-                            time.sleep(5)
+                             
                             break
                         else:
                             return False
@@ -297,7 +299,7 @@ class FFmpegStreamHandler:
             self.process = None
     
     def start(self):
-        """Start the stream capture thread"""
+        """Start async stream loading (non-blocking)"""
         try:
             logger.info(f"Stream {self.stream_id}: start() called")
             
@@ -305,20 +307,53 @@ class FFmpegStreamHandler:
                 logger.warning(f"Stream {self.stream_id}: Already running, skipping start")
                 return
             
-            logger.info(f"Stream {self.stream_id}: Attempting connection via FFmpeg...")
-            if not self.connect():
-                logger.error(f"Stream {self.stream_id}: Failed to connect, will not start capture thread")
-                return
+            # Reset state for new connection
+            self.last_frame = None
+            self.connection_failed = False
+            self.stream_state = "connecting"
+            while not self.frame_queue.empty():
+                try:
+                    self.frame_queue.get_nowait()
+                except:
+                    break
             
-            logger.info(f"Stream {self.stream_id}: Connection successful, starting capture thread")
+            # Mark as running and spawn async connection thread (non-blocking)
             self.is_running = True
-            self.thread = threading.Thread(target=self._capture_loop, daemon=True)
+            self.thread = threading.Thread(target=self._async_connect_and_capture, daemon=True)
             self.thread.start()
-            logger.info(f"Stream {self.stream_id}: Capture thread started successfully")
+            logger.info(f"Stream {self.stream_id}: Async connection thread spawned (non-blocking)")
         except Exception as e:
             logger.error(f"Stream {self.stream_id}: Exception in start(): {str(e)}")
             logger.error(f"Stream {self.stream_id}: Traceback:\n{traceback.format_exc()}")
             self.is_running = False
+    
+    def _async_connect_and_capture(self):
+        """Spawn thread that attempts connection up to 3 times, then runs capture loop or gives up"""
+        logger.info(f"Stream {self.stream_id}: _async_connect_and_capture thread started")
+        
+        # Try up to 3 times to establish connection
+        for attempt in range(1, self.max_connection_attempts + 1):
+            if not self.is_running:
+                logger.info(f"Stream {self.stream_id}: Stop request received")
+                return
+            
+            logger.info(f"Stream {self.stream_id}: Connection attempt {attempt}/{self.max_connection_attempts}")
+            self.stream_state = "connecting"
+            if self.connect():
+                logger.info(f"Stream {self.stream_id}: Connection successful, starting capture loop")
+                self.stream_state = "connected"
+                self._capture_loop()
+                return
+            
+            # Retry delay (except on last attempt)
+            if attempt < self.max_connection_attempts:
+                time.sleep(2)
+        
+        # All 3 attempts failed
+        logger.error(f"Stream {self.stream_id}: Failed to connect after {self.max_connection_attempts} attempts, giving up")
+        self.stream_state = "failed"
+        self.connection_failed = True
+        self.is_running = False
     
     def _capture_loop(self):
         """Main capture loop running in separate thread"""
@@ -333,6 +368,11 @@ class FFmpegStreamHandler:
                 if self.process is None or self.process.poll() is not None:
                     logger.debug(f"Stream {self.stream_id}: FFmpeg process died, attempting reconnection")
                     frame_buffer = b''
+                    # Don't try to reconnect if permanently failed
+                    if self.connection_failed:
+                        logger.warning(f"Stream {self.stream_id}: Stream permanently failed, no longer attempting reconnection")
+                        self.is_running = False
+                        break
                     if not self.connect():
                         time.sleep(1)
                         continue

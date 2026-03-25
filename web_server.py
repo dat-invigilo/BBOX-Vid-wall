@@ -27,6 +27,72 @@ wall_thread = None
 is_running = False
 recorder = None
 config_file = 'config.yaml'
+bbox_on_mode = False  # Global toggle for BBOX_ON mode
+
+
+def check_shared_volume():
+    """Check and log shared volume contents"""
+    shared_volume_path = '/app/shared_volume'
+    if os.path.exists(shared_volume_path):
+        try:
+            files = os.listdir(shared_volume_path)
+            file_count = len(files)
+            logger.info(f"✓ Shared volume accessible at {shared_volume_path}")
+            
+            # Try to parse config.yaml from shared volume
+            config_path = os.path.join(shared_volume_path, 'config.yaml')
+            if os.path.exists(config_path):
+                try:
+                    with open(config_path, 'r') as f:
+                        shared_config = yaml.safe_load(f)
+                    
+                    if shared_config and 'DEPLOYMENT' in shared_config:
+                        deployment = shared_config['DEPLOYMENT']
+                        num_gpus = deployment.get('NUM_GPUS', 0)
+                        num_cameras = deployment.get('NUM_CAMERAS_PER_GPU', 0)
+                        bbox_on = deployment.get('BBOX_ON', False)
+                        total_cameras = num_gpus * num_cameras
+                        
+                        logger.info(f"✓ Total cameras: {total_cameras}")
+                        logger.info(f"✓ BBOX_ON mode: {'ENABLED' if bbox_on else 'DISABLED'}")
+                        
+                        if bbox_on:
+                            logger.info(f"✓ Using localhost ports 7000-700{total_cameras-1}")
+                        else:
+                            logger.info(f"✓ Parsing deepstream configs for {num_gpus} GPU(s)")
+                            
+                            # Parse deepstream config files for each GPU
+                            for gpu_id in range(num_gpus):
+                                config_file = os.path.join(
+                                    shared_volume_path, 
+                                    'configs', 
+                                    str(gpu_id), 
+                                    f'deepstream_app_config_gpu{gpu_id}.txt'
+                                )
+                                
+                                if os.path.exists(config_file):
+                                    logger.info(f"  GPU {gpu_id} config:")
+                                    try:
+                                        with open(config_file, 'r') as f:
+                                            for line in f:
+                                                line = line.strip()
+                                                if line.startswith('uri = '):
+                                                    logger.info(f"    {line}")
+                                    except Exception as e:
+                                        logger.warning(f"    Could not read config: {str(e)}")
+                                else:
+                                    logger.warning(f"  GPU {gpu_id} config not found: {config_file}")
+                    else:
+                        logger.warning("config.yaml found but no DEPLOYMENT section")
+                except Exception as e:
+                    logger.warning(f"Could not parse config.yaml: {str(e)}")
+            
+            return file_count
+        except Exception as e:
+            logger.warning(f"Could not read shared volume: {str(e)}")
+    else:
+        logger.warning(f"✗ Shared volume not mounted at {shared_volume_path}")
+    return 0
 
 
 def load_config():
@@ -40,15 +106,96 @@ def load_config():
     return {}
 
 
+def parse_deepstream_uris():
+    """Parse URI streams from deepstream config files"""
+    shared_volume_path = '/app/shared_volume'
+    uris = []
+    
+    config_path = os.path.join(shared_volume_path, 'config.yaml')
+    if not os.path.exists(config_path):
+        return uris
+    
+    try:
+        with open(config_path, 'r') as f:
+            shared_config = yaml.safe_load(f)
+        
+        if shared_config and 'DEPLOYMENT' in shared_config:
+            deployment = shared_config['DEPLOYMENT']
+            num_gpus = deployment.get('NUM_GPUS', 0)
+            
+            # Parse deepstream config files for each GPU
+            for gpu_id in range(num_gpus):
+                config_file = os.path.join(
+                    shared_volume_path, 
+                    'configs', 
+                    str(gpu_id), 
+                    f'deepstream_app_config_gpu{gpu_id}.txt'
+                )
+                
+                if os.path.exists(config_file):
+                    try:
+                        with open(config_file, 'r') as f:
+                            for line in f:
+                                line = line.strip()
+                                if line.startswith('uri = '):
+                                    uri = line.replace('uri = ', '').strip()
+                                    uris.append(uri)
+                    except Exception as e:
+                        logger.warning(f"Could not read config for GPU {gpu_id}: {str(e)}")
+    except Exception as e:
+        logger.warning(f"Could not parse deepstream configs: {str(e)}")
+    
+    return uris
+
+
+def get_bbox_mode_streams():
+    """Generate streams for BBOX_ON mode (localhost ports starting at 7000)"""
+    # Get the number of actual streams by parsing deepstream URIs
+    actual_uris = parse_deepstream_uris()
+    num_streams = len(actual_uris)
+    
+    streams = []
+    base_port = 7000
+    
+    for i in range(num_streams):
+        port = base_port + i
+        uri = f'rtsp://localhost:{port}/ds-test'
+        streams.append(uri)
+        logger.debug(f"BBOX_ON mode: Generated stream {i+1}/{num_streams}: {uri}")
+    
+    logger.info(f"BBOX_ON mode: Generated {num_streams} localhost streams (based on actual deepstream URIs)")
+    return streams
+
+
 def get_streams_from_config():
-    """Get streams based on dev_mode setting"""
+    """Get streams based on dev_mode and BBOX_ON setting"""
     config = load_config()
     dev_mode = config.get('dev_mode', False)
+    bbox_mode = False
+    
+    # Check for BBOX_ON mode in shared volume config
+    shared_volume_path = '/app/shared_volume'
+    config_path = os.path.join(shared_volume_path, 'config.yaml')
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, 'r') as f:
+                shared_config = yaml.safe_load(f)
+            if shared_config and 'DEPLOYMENT' in shared_config:
+                deployment = shared_config['DEPLOYMENT']
+                bbox_mode = deployment.get('BBOX_ON', False)
+                logger.info(f"BBOX_ON mode: {bbox_mode}")
+        except:
+            pass
     
     if dev_mode:
         streams = config.get('test_vids', [])
+    elif bbox_mode:
+        streams = get_bbox_mode_streams()
     else:
-        streams = config.get('streams', [])
+        streams = parse_deepstream_uris()
+        if not streams:
+            # Fallback to config streams if no deepstream uris found
+            streams = config.get('streams', [])
     
     return streams, dev_mode
 
@@ -175,17 +322,18 @@ def encode_frame_to_jpeg(frame):
 
 def generate_frames():
     """Generate video stream frames"""
-    logger.info("generate_frames(): Starting - waiting for streamer to be ready")
+    stream_id = int(time.time())
+    logger.info(f"generate_frames({stream_id}): Starting - waiting for streamer to be ready")
     
     # Wait for streamer to start (with timeout to avoid infinite wait)
-    timeout = 30  # 30 seconds
+    timeout = 10  # Reduced timeout for switching
     elapsed = 0
     wait_interval = 0.5
     frame_count = 0
     
     # Send placeholder frames while waiting for streamer
     while not streamer.is_running and elapsed < timeout:
-        logger.debug(f"generate_frames(): Streamer not running yet, waiting... ({elapsed:.1f}s / {timeout}s)")
+        logger.debug(f"generate_frames({stream_id}): Streamer not running yet, sending placeholder... ({elapsed:.1f}s / {timeout}s)")
         
         # Generate placeholder frame to keep connection alive
         placeholder = generate_placeholder_frame()
@@ -198,16 +346,17 @@ def generate_frames():
                    b'Content-Length: ' + str(len(frame_bytes)).encode() + b'\r\n\r\n' +
                    frame_bytes + b'\r\n')
         except Exception as e:
-            logger.error(f"generate_frames(): Error creating placeholder: {str(e)}")
+            logger.error(f"generate_frames({stream_id}): Error creating placeholder: {str(e)}")
+            break
         
         time.sleep(wait_interval)
         elapsed += wait_interval
     
     if not streamer.is_running:
-        logger.warning("generate_frames(): Timeout waiting for streamer to start")
+        logger.warning(f"generate_frames({stream_id}): Timeout waiting for streamer to start, terminating generator")
         return
     
-    logger.info(f"generate_frames(): Streamer is running, starting frame generation (sent {frame_count} placeholder frames during wait)")
+    logger.info(f"generate_frames({stream_id}): Streamer is running, starting frame generation")
     
     while streamer.is_running:
         frame = streamer.get_frame()
@@ -220,8 +369,8 @@ def generate_frames():
             frame_bytes = encode_frame_to_jpeg(frame)
             
             frame_count += 1
-            if frame_count % 30 == 0:  # Log every 30 frames (~1 second at 30fps)
-                logger.debug(f"generate_frames(): Sent {frame_count} total frames")
+            if frame_count % 300 == 0:  # Log every 10 seconds approx
+                logger.debug(f"generate_frames({stream_id}): Sent {frame_count} total frames")
             
             # Yield frame in MJPEG format
             yield (b'--frame\r\n'
@@ -229,10 +378,10 @@ def generate_frames():
                    b'Content-Length: ' + str(len(frame_bytes)).encode() + b'\r\n\r\n' +
                    frame_bytes + b'\r\n')
         except Exception as e:
-            logger.error(f"generate_frames(): Error encoding frame: {str(e)}")
-            continue
+            logger.error(f"generate_frames({stream_id}): Error encoding frame: {str(e)}")
+            break
     
-    logger.info(f"generate_frames(): Stream ended after {frame_count} total frames")
+    logger.info(f"generate_frames({stream_id}): Stream ended after {frame_count} total frames")
 
 
 @app.route('/')
@@ -345,6 +494,55 @@ def api_set_config():
     except Exception as e:
         logger.error(f"Error in api_set_config: {str(e)}")
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/bbox-mode', methods=['GET'])
+def api_get_bbox_mode():
+    """Get current BBOX_ON mode state"""
+    global bbox_on_mode
+    return jsonify({'bbox_on': bbox_on_mode})
+
+
+@app.route('/api/bbox-mode', methods=['POST'])
+def api_set_bbox_mode():
+    """Set BBOX_ON mode state"""
+    global bbox_on_mode
+    try:
+        data = request.get_json() or {}
+        bbox_on_mode = data.get('bbox_on', False)
+        logger.info(f"BBOX_ON mode set to: {bbox_on_mode}")
+        return jsonify({'status': 'updated', 'bbox_on': bbox_on_mode})
+    except Exception as e:
+        logger.error(f"Error setting BBOX mode: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/streams', methods=['GET'])
+def api_get_streams():
+    """Get streams based on current mode (dev_mode and bbox_on)"""
+    global bbox_on_mode
+    try:
+        dev_mode = request.args.get('dev_mode', 'false').lower() == 'true'
+        bbox_on = request.args.get('bbox_on', str(bbox_on_mode).lower()).lower() == 'true'
+        
+        config = load_config()
+        
+        if dev_mode:
+            streams = config.get('test_vids', [])
+            logger.info(f"Returning {len(streams)} test videos")
+        elif bbox_on:
+            streams = get_bbox_mode_streams()
+            logger.info(f"Returning {len(streams)} BBOX_ON streams (localhost ports)")
+        else:
+            streams = parse_deepstream_uris()
+            if not streams:
+                streams = config.get('streams', [])
+            logger.info(f"Returning {len(streams)} deepstream URIs")
+        
+        return jsonify({'streams': streams})
+    except Exception as e:
+        logger.error(f"Error getting streams: {str(e)}")
+        return jsonify({'error': str(e), 'streams': []}), 500
 
 
 # ============================================================================
@@ -550,4 +748,12 @@ def api_savemode_download():
 
 
 if __name__ == '__main__':
+    logger.info("=" * 60)
+    logger.info("Video Wall Web Server Starting")
+    logger.info("=" * 60)
+    
+    # Check shared volume
+    file_count = check_shared_volume()
+    
+    logger.info("=" * 60)
     app.run(host='0.0.0.0', port=5002, debug=False, threaded=True)
