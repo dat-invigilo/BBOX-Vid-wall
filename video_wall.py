@@ -2,6 +2,7 @@
 Video Wall Display - Displays multiple RTSP streams in a grid layout using FFmpeg
 """
 import numpy as np
+import threading
 from typing import List, Dict, Optional
 import logging
 import traceback
@@ -209,3 +210,29 @@ class VideoWallDisplay:
     def get_output_dimensions(self) -> tuple:
         """Get (output_width, output_height)"""
         return (self.output_width, self.output_height)
+
+    def update_stream(self, index: int, new_url: str):
+        """Update a specific stream URL and restart its handler"""
+        if index < 0 or index >= self.total_cells:
+            logger.warning(f"Invalid stream index: {index}")
+            return False
+        
+        logger.info(f"Updating stream {index} to: {new_url}")
+        
+        # Stop old handler if exists
+        old_handler = self.handlers.get(index)
+        if old_handler:
+            old_handler.stop()
+        
+        # Update URL and create new handler
+        self.streams[index] = new_url
+        if new_url:
+            new_handler = FFmpegStreamHandler(new_url, index)
+            self.handlers[index] = new_handler
+            new_handler.start()
+            logger.info(f"Stream {index} updated and restarted")
+        else:
+            self.handlers[index] = None
+            logger.info(f"Stream {index} cleared")
+            
+        return True

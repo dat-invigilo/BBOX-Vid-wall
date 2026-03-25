@@ -84,22 +84,25 @@
 
                 <!-- BBOX Mode -->
                 <div class="section">
-                    <div class="section-title">Stream Mode</div>
+                    <div class="section-title">Global Stream Mode</div>
                     <div class="form-group checkbox-group">
-                        <input type="checkbox" id="bboxMode">
+                        <input type="checkbox" id="bboxMode" onchange="toggleAllBbox(this.checked)">
                         <label for="bboxMode" style="margin: 0;">BBOX_ON mode (localhost ports)</label>
                     </div>
-                    <p style="color: #999; font-size: 12px; margin-top: 5px;">
-                        When enabled, uses localhost:7000+ ports. When disabled, uses deepstream URIs.
-                    </p>
                 </div>
 
-                <!-- Streams -->
+                <!-- Streams List with Per-Stream Toggle -->
                 <div class="section">
                     <div class="section-title" id="streamsLabel">RTSP Streams</div>
                     <button class="btn-secondary btn-small" onclick="reloadStreams()" style="width: 100%; margin-bottom: 10px;">🔄 Reload Streams</button>
-                    <div class="form-group">
-                        <textarea id="streams" placeholder="rtsp://camera1/stream&#10;rtsp://camera2/stream"></textarea>
+                    
+                    <div id="streamListContainer" style="margin-top: 10px; max-height: 400px; min-height: 50px; overflow-y: auto; border: 1px solid #004d19; padding: 10px; background: rgba(0, 255, 65, 0.05); color: #00ff41;">
+                        <!-- Streams with toggles will be injected here -->
+                    </div>
+                    
+                    <div class="form-group" style="margin-top: 10px;">
+                        <label>Manual URIs (one per line):</label>
+                        <textarea id="streams" placeholder="rtsp://camera1/stream&#10;rtsp://camera2/stream" style="height: 80px;"></textarea>
                     </div>
                 </div>
 
@@ -171,9 +174,13 @@
 
         <!-- Main Content -->
         <div class="main-content">
-            <div style="flex: 1; display: flex; flex-direction: column; overflow: hidden;">
-                <div class="video-container">
+            <div style="flex: 1; display: flex; flex-direction: column; overflow: hidden; position: relative;">
+                <div class="video-container" id="videoContainer">
                     <img id="videoFeed" class="video-feed" src="/video_feed" alt="Video feed" style="display: none;">
+                    
+                    <!-- New Streams Overlay for Controls -->
+                    <div id="streamsOverlay" class="streams-overlay"></div>
+
                     <div class="placeholder" id="placeholder">
                         <div class="placeholder-icon">📺</div>
                         <div>Click <strong>Start</strong> to begin</div>
@@ -194,9 +201,28 @@
             
             // Auto-remove after 5 seconds
             setTimeout(() => {
-                msgDiv.querySelector('.message')?.remove();
+                const elements = msgDiv.getElementsByClassName('message');
+                if (elements.length > 0) elements[0].remove();
             }, 5000);
         }
+
+        // Kebab and Dropdown helper
+        function toggleKebab(event, index) {
+            event.stopPropagation();
+            const dropdown = document.getElementById(`dropdown_${index}`);
+            
+            // Close all other dropdowns
+            document.querySelectorAll('.dropdown-menu').forEach(el => {
+                if (el.id !== `dropdown_${index}`) el.classList.remove('active');
+            });
+
+            dropdown.classList.toggle('active');
+        }
+
+        // Global click handler to close dropdowns
+        document.addEventListener('click', () => {
+            document.querySelectorAll('.dropdown-menu').forEach(el => el.classList.remove('active'));
+        });
 
         function updateStatus() {
             fetch(`${API_BASE}/api/status`)
@@ -215,6 +241,43 @@
                         document.getElementById('startBtn').disabled = true;
                         document.getElementById('stopBtn').disabled = false;
                         document.getElementById('stopBtn').textContent = 'Stop';
+
+                        // Logic for streams overlay (kebab menus)
+                        const overlay = document.getElementById('streamsOverlay');
+                        const streamsCount = data.streams || 0;
+                        const cols = data.cols || 2;
+                        const rows = data.rows || 1;
+
+                        // Only recreate if count or dimensions change
+                        if (overlay.children.length !== streamsCount) {
+                            overlay.innerHTML = '';
+                            overlay.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+                            overlay.style.aspectRatio = `${cols}/${rows}`;
+
+                            // Check current bbox_toggles from sync call
+                            fetch(`${API_BASE}/api/streams?dev_mode=${data.dev_mode}`)
+                                .then(r => r.json())
+                                .then(streamData => {
+                                    const bbox_toggles = streamData.bbox_toggles || {};
+                                    for (let i = 0; i < streamsCount; i++) {
+                                        const is_bbox = bbox_toggles[i] || (bbox_toggles[String(i)] || false);
+                                        const cell = document.createElement('div');
+                                        cell.className = 'stream-cell-controls';
+                                        cell.innerHTML = `
+                                            <div class="kebab-menu" onclick="toggleKebab(event, ${i})">
+                                                <span></span><span></span><span></span>
+                                            </div>
+                                            <div id="dropdown_${i}" class="dropdown-menu">
+                                                <div class="dropdown-item">
+                                                    <input type="checkbox" id="bbox_check_overlay_${i}" ${is_bbox ? 'checked' : ''} onchange="onPerStreamBboxToggle(${i}, this.checked)">
+                                                    <label for="bbox_check_overlay_${i}">BBOX MODE</label>
+                                                </div>
+                                            </div>
+                                        `;
+                                        overlay.appendChild(cell);
+                                    }
+                                });
+                        }
                     } else {
                         statusDot.classList.remove('running');
                         statusText.textContent = 'Stopped';
@@ -223,6 +286,9 @@
                         document.getElementById('startBtn').disabled = false;
                         document.getElementById('stopBtn').disabled = true;
                         document.getElementById('stopBtn').textContent = 'Stop';
+                        
+                        // Clear overlay when stopped
+                        document.getElementById('streamsOverlay').innerHTML = '';
                     }
 
                     if (data.running) {
@@ -338,60 +404,116 @@
                 });
         }
 
-        function stopAndReloadStreams() {
+        function reloadStreams() {
             /**
-             * Stop current streams and reload new ones (for BBOX_ON toggle)
-             * Does NOT auto-start - user must click Start button
+             * Reload streams without stopping current display
+             * Used during initial load OR when user clicks Reload
              */
-            console.log('[stopAndReloadStreams] Stopping current streams and loading new ones');
-            
-            // Get current mode values IMMEDIATELY
             const devMode = document.getElementById('devMode').checked;
-            const bboxMode = document.getElementById('bboxMode').checked;
-            console.log('[stopAndReloadStreams] Config: devMode=', devMode, 'bboxMode=', bboxMode);
+            console.log('[reloadStreams] Fetching streams: devMode=', devMode);
             
-            // First, stop the wall if running
-            fetch(`${API_BASE}/api/status`)
+            fetch(`${API_BASE}/api/streams?dev_mode=${devMode}`)
                 .then(r => r.json())
                 .then(data => {
-                    if (data.running) {
-                        console.log('[stopAndReloadStreams] Wall is running, stopping...');
-                        return fetch(`${API_BASE}/api/stop`, { method: 'POST' });
-                    } else {
-                        console.log('[stopAndReloadStreams] Wall not running');
-                        return Promise.resolve();
+                    console.log('[reloadStreams] Got streams:', data);
+                    
+                    // Update the list container with toggles
+                    const container = document.getElementById('streamListContainer');
+                    if (container) {
+                        container.innerHTML = '';
+                        
+                        const streams = data.streams || [];
+                        const bbox_toggles = data.bbox_toggles || {};
+                        
+                        streams.forEach((stream, idx) => {
+                            const is_bbox = bbox_toggles[idx] || false;
+                            
+                            // Shorten stream name for display
+                            let streamName = stream;
+                            try {
+                                const url = new URL(stream);
+                                streamName = url.pathname.split('/').pop() || url.hostname;
+                            } catch(e) {}
+                            
+                            const html = `
+                                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; border-bottom: 1px solid rgba(0,255,65,0.1); padding-bottom: 5px;">
+                                    <div style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px;" title="${stream}">
+                                        ${idx + 1}. ${streamName}
+                                    </div>
+                                    <div class="checkbox-group" style="margin-left: 10px;">
+                                        <input type="checkbox" id="bbox_check_${idx}" class="stream-bbox-toggle" ${is_bbox ? 'checked' : ''} onchange="onPerStreamBboxToggle(${idx}, this.checked)">
+                                        <label for="bbox_check_${idx}" style="font-size: 10px; color: #00ff41; margin-bottom: 0;">BBOX</label>
+                                    </div>
+                                </div>
+                            `;
+                            container.insertAdjacentHTML('beforeend', html);
+                        });
+                        
+                        if (streams.length === 0) {
+                            container.innerHTML = '<div style="color: #999; text-align: center; padding: 10px;">No streams found</div>';
+                        }
                     }
-                })
-                .then(() => {
-                    // Wait longer for full cleanup and process termination
-                    console.log('[stopAndReloadStreams] Waiting for cleanup...');
-                    return new Promise(resolve => setTimeout(resolve, 1000));
-                })
-                .then(() => {
-                    console.log('[stopAndReloadStreams] Reloading streams with devMode=', devMode, 'bboxMode=', bboxMode);
-                    // Reload streams with new mode
-                    const url = `${API_BASE}/api/streams?dev_mode=${devMode}&bbox_on=${bboxMode}`;
-                    console.log('[stopAndReloadStreams] Fetching from:', url);
-                    return fetch(url).then(r => r.json());
-                })
-                .then(data => {
-                    console.log('[stopAndReloadStreams] Got', data.streams.length, 'streams:', data.streams);
+
+                    // Also update the raw text area
+                    document.getElementById('streams').value = (data.streams || []).join('\n');
                     
-                    // Clear the video display to ensure old frames don't show
-                    const videoFeed = document.getElementById('videoFeed');
-                    videoFeed.style.display = 'none';
-                    
-                    // Update streams display
-                    document.getElementById('streams').value = data.streams.join('\n');
-                    
-                    let mode = devMode ? 'test videos' : (bboxMode ? 'BBOX_ON (localhost)' : 'deepstream URIs');
-                    showMessage(`Ready to start with ${data.streams.length} stream(s) from ${mode}. Click Start to begin.`, 'success');
-                    updateStatus();
+                    // Update global bbox checkbox state (true if ALL are checked)
+                    const toggles = document.querySelectorAll('.stream-bbox-toggle');
+                    if (toggles.length > 0) {
+                        const allChecked = Array.from(toggles).every(t => t.checked);
+                        document.getElementById('bboxMode').checked = allChecked;
+                    }
+
+                    showMessage(`Found ${data.streams.length} stream(s)`, 'success');
                 })
                 .catch(e => {
-                    console.error('[stopAndReloadStreams] Error:', e);
+                    console.error('[reloadStreams] Error:', e);
                     showMessage(`Error: ${e.message}`, 'error');
                 });
+        }
+
+        function onPerStreamBboxToggle(index, checked) {
+            console.log(`[onPerStreamBboxToggle] Stream ${index} -> ${checked}`);
+            
+            // Sync with sidebar toggle if it exists
+            const sidebarBtn = document.getElementById(`bbox_check_${index}`);
+            if (sidebarBtn) sidebarBtn.checked = checked;
+            
+            // Sync with overlay toggle if it exists
+            const overlayBtn = document.getElementById(`bbox_check_overlay_${index}`);
+            if (overlayBtn) overlayBtn.checked = checked;
+
+            // Collect all current toggles
+            const bbox_toggles = {};
+            document.querySelectorAll('.stream-bbox-toggle, [id^="bbox_check_overlay_"]').forEach(checkbox => {
+                const idx = checkbox.id.replace('bbox_check_', '').replace('bbox_check_overlay_', '');
+                bbox_toggles[idx] = checkbox.checked;
+            });
+
+            // Update global checkbox
+            const allToggles = document.querySelectorAll('.stream-bbox-toggle, [id^="bbox_check_overlay_"]');
+            if (allToggles.length > 0) {
+                const allChecked = Array.from(allToggles).every(t => t.checked);
+                document.getElementById('bboxMode').checked = allChecked;
+            }
+
+            // Save configuration
+            saveConfig(bbox_toggles);
+            
+            showMessage(`Stream ${index+1} BBOX updated`, 'info');
+        }
+
+        function toggleAllBbox(checked) {
+            console.log(`[toggleAllBbox] Setting all to ${checked}`);
+            const bbox_toggles = {};
+            document.querySelectorAll('.stream-bbox-toggle').forEach(checkbox => {
+                checkbox.checked = checked;
+                const idx = checkbox.id.replace('bbox_check_', '');
+                bbox_toggles[idx] = checked;
+            });
+            
+            saveConfig(bbox_toggles);
+            showMessage(`All streams BBOX Mode: ${checked ? 'ON' : 'OFF'}. Restart wall to apply.`, 'info');
         }
 
         function loadConfig() {
@@ -404,15 +526,28 @@
                     document.getElementById('devMode').checked = config.dev_mode || false;
                     document.getElementById('streams').value = (config.streams || []).join('\n');
                     document.getElementById('testVids').value = (config.test_vids || []).join('\n');
+                    
                     updateDevModeUI();
+                    
+                    // We call reloadStreams to populate the per-stream toggle list
+                    reloadStreams();
+                    
                     showMessage('Configuration loaded', 'success');
                 })
                 .catch(e => showMessage(`Error loading config: ${e.message}`, 'error'));
         }
 
-        function saveConfig() {
+        function saveConfig(bbox_toggles = null) {
             const resolution = document.getElementById('resolution').value;
-            const [width, height] = resolution.split('x').map(Number);
+            
+            // If not provided, collect from UI
+            if (bbox_toggles === null) {
+                bbox_toggles = {};
+                document.querySelectorAll('.stream-bbox-toggle').forEach(checkbox => {
+                    const idx = checkbox.id.replace('bbox_check_', '');
+                    bbox_toggles[idx] = checkbox.checked;
+                });
+            }
 
             const config = {
                 cols: parseInt(document.getElementById('cols').value),
@@ -421,6 +556,7 @@
                 dev_mode: document.getElementById('devMode').checked,
                 streams: document.getElementById('streams').value.split('\n').map(s => s.trim()).filter(s => s),
                 test_vids: document.getElementById('testVids').value.split('\n').map(s => s.trim()).filter(s => s),
+                bbox_toggles: bbox_toggles,
                 performance: { buffer_size: 2, max_fps: 30, reconnect_delay: 2 }
             };
 
@@ -587,27 +723,6 @@
             loadSaveModeConfig();
         }
 
-        function reloadStreams() {
-            const devMode = document.getElementById('devMode').checked;
-            const bboxMode = document.getElementById('bboxMode').checked;
-            
-            showMessage('Loading streams...', 'info');
-            
-            fetch(`${API_BASE}/api/streams?dev_mode=${devMode}&bbox_on=${bboxMode}`)
-                .then(r => r.json())
-                .then(data => {
-                    const streamsText = data.streams.join('\n');
-                    document.getElementById('streams').value = streamsText;
-                    
-                    let mode = devMode ? 'test videos' : (bboxMode ? 'BBOX_ON (localhost)' : 'deepstream URIs');
-                    showMessage(`Loaded ${data.streams.length} stream(s) from ${mode}`, 'success');
-                })
-                .catch(e => {
-                    console.error('Error loading streams:', e);
-                    showMessage(`Error loading streams: ${e.message}`, 'error');
-                });
-        }
-
         // Event listeners
         document.getElementById('devMode').addEventListener('change', function() {
             updateDevModeUI();
@@ -616,24 +731,7 @@
         
         document.getElementById('bboxMode').addEventListener('change', function() {
             console.log('[bboxMode change] BBOX_ON toggled to:', this.checked);
-            // Update backend
-            fetch(`${API_BASE}/api/bbox-mode`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ bbox_on: this.checked })
-            })
-            .then(r => r.json())
-            .then(data => {
-                showMessage(`BBOX_ON mode: ${this.checked ? 'ENABLED' : 'DISABLED'}`, 'success');
-                // Stop current streams and load new ones (but don't auto-start)
-                stopAndReloadStreams();
-            })
-            .catch(e => {
-                console.error('Error updating BBOX mode:', e);
-                showMessage(`Error: ${e.message}`, 'error');
-                // Revert checkbox on error
-                this.checked = !this.checked;
-            });
+            toggleAllBbox(this.checked);
         });
 
         // Initialize
@@ -648,18 +746,11 @@
                     document.getElementById('devMode').checked = config.dev_mode || false;
                     document.getElementById('testVids').value = (config.test_vids || []).join('\n');
                     updateDevModeUI();
-                })
-                .catch(e => console.error('Error loading config:', e));
-            
-            // Then load BBOX_ON state and streams
-            fetch(`${API_BASE}/api/bbox-mode`)
-                .then(r => r.json())
-                .then(data => {
-                    document.getElementById('bboxMode').checked = data.bbox_on || false;
-                    // Load streams with current mode
+                    
+                    // After loading config, we have the initial toggles, but reloadStreams will fetch them again
                     setTimeout(reloadStreams, 300);
                 })
-                .catch(e => console.error('Error loading BBOX mode:', e));
+                .catch(e => console.error('Error loading config:', e));
             
             // Status checks
             updateStatus();

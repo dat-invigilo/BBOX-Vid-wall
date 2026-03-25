@@ -28,6 +28,7 @@ is_running = False
 recorder = None
 config_file = 'config.yaml'
 bbox_on_mode = False  # Global toggle for BBOX_ON mode
+session_bbox_toggles = {} # In-memory storage for per-stream toggles
 
 
 def check_shared_volume():
@@ -107,13 +108,13 @@ def load_config():
 
 
 def parse_deepstream_uris():
-    """Parse URI streams from deepstream config files"""
+    """Parse URI streams and BBOX ports from deepstream config files"""
     shared_volume_path = '/app/shared_volume'
-    uris = []
+    streams_info = []
     
     config_path = os.path.join(shared_volume_path, 'config.yaml')
     if not os.path.exists(config_path):
-        return uris
+        return streams_info
     
     try:
         with open(config_path, 'r') as f:
@@ -134,68 +135,65 @@ def parse_deepstream_uris():
                 
                 if os.path.exists(config_file):
                     try:
+                        # Use ConfigParser but handle multiple source/sink sections
+                        # configparser doesn't support multiple identical keys, so we parse manually
+                        current_source_uri = None
                         with open(config_file, 'r') as f:
                             for line in f:
                                 line = line.strip()
+                                # Clear comments
+                                if '#' in line:
+                                    line = line.split('#')[0].strip()
+                                
                                 if line.startswith('uri = '):
-                                    uri = line.replace('uri = ', '').strip()
-                                    uris.append(uri)
+                                    current_source_uri = line.replace('uri = ', '').strip()
+                                elif line.startswith('rtsp-port = '):
+                                    port = line.replace('rtsp-port = ', '').strip()
+                                    if current_source_uri:
+                                        bbox_uri = f'rtsp://localhost:{port}/ds-test'
+                                        streams_info.append({
+                                            'source': current_source_uri,
+                                            'bbox': bbox_uri
+                                        })
+                                        current_source_uri = None
                     except Exception as e:
                         logger.warning(f"Could not read config for GPU {gpu_id}: {str(e)}")
     except Exception as e:
         logger.warning(f"Could not parse deepstream configs: {str(e)}")
     
-    return uris
-
-
-def get_bbox_mode_streams():
-    """Generate streams for BBOX_ON mode (localhost ports starting at 7000)"""
-    # Get the number of actual streams by parsing deepstream URIs
-    actual_uris = parse_deepstream_uris()
-    num_streams = len(actual_uris)
-    
-    streams = []
-    base_port = 7000
-    
-    for i in range(num_streams):
-        port = base_port + i
-        uri = f'rtsp://localhost:{port}/ds-test'
-        streams.append(uri)
-        logger.debug(f"BBOX_ON mode: Generated stream {i+1}/{num_streams}: {uri}")
-    
-    logger.info(f"BBOX_ON mode: Generated {num_streams} localhost streams (based on actual deepstream URIs)")
-    return streams
+    return streams_info
 
 
 def get_streams_from_config():
-    """Get streams based on dev_mode and BBOX_ON setting"""
+    """Get streams with their BBOX toggle status"""
     config = load_config()
     dev_mode = config.get('dev_mode', False)
-    bbox_mode = False
     
-    # Check for BBOX_ON mode in shared volume config
-    shared_volume_path = '/app/shared_volume'
-    config_path = os.path.join(shared_volume_path, 'config.yaml')
-    if os.path.exists(config_path):
-        try:
-            with open(config_path, 'r') as f:
-                shared_config = yaml.safe_load(f)
-            if shared_config and 'DEPLOYMENT' in shared_config:
-                deployment = shared_config['DEPLOYMENT']
-                bbox_mode = deployment.get('BBOX_ON', False)
-                logger.info(f"BBOX_ON mode: {bbox_mode}")
-        except:
-            pass
+    # Use in-memory session toggles instead of reading from config.yaml
+    # Format: {index: true/false}
+    bbox_toggles = session_bbox_toggles
     
     if dev_mode:
-        streams = config.get('test_vids', [])
-    elif bbox_mode:
-        streams = get_bbox_mode_streams()
+        raw_streams = config.get('test_vids', [])
+        # For dev mode, we don't really have BBOX counterparts usually, 
+        # but we'll return them as-is.
+        streams = raw_streams
     else:
-        streams = parse_deepstream_uris()
-        if not streams:
-            # Fallback to config streams if no deepstream uris found
+        streams_info = parse_deepstream_uris()
+        if not streams_info:
+            # Fallback to simple list if parsing fails
             streams = config.get('streams', [])
+        else:
+            # Map streams based on their individual toggle
+            streams = []
+            for i, info in enumerate(streams_info):
+                # Check if this specific stream has BBOX enabled
+                # We use string keys for the dict because JSON/YAML keys can be tricky
+                is_bbox = bbox_toggles.get(str(i), False)
+                if is_bbox:
+                    streams.append(info['bbox'])
+                else:
+                    streams.append(info['source'])
     
     return streams, dev_mode
 
@@ -248,6 +246,13 @@ class VideoWallStreamer:
                 self.wall.stop()
             self.is_running = False
             logger.info("Video wall stopped")
+    
+    def update_stream(self, index, url):
+        """Update a specific stream in the running wall"""
+        with self.lock:
+            if self.wall and self.is_running:
+                return self.wall.update_stream(index, url)
+        return False
     
     def get_frame(self):
         """Get current frame"""
@@ -459,38 +464,31 @@ def api_get_config():
 
 @app.route('/api/config', methods=['POST'])
 def api_set_config():
-    """Update configuration"""
+    """Update configuration (in-memory for toggles to avoid Permission Denied)"""
     try:
         data = request.get_json() or {}
-        config = {
-            'dev_mode': data.get('dev_mode', False),
-            'test_vids': data.get('test_vids', []),
-            'cols': data.get('cols', 2),
-            'rows': data.get('rows', 2),
-            'resolution': data.get('resolution', '1920x1080'),
-            'streams': data.get('streams', []),
-            'performance': data.get('performance', {
-                'buffer_size': 2,
-                'max_fps': 30,
-                'reconnect_delay': 2
-            }),
-            'save_mode': data.get('save_mode', {
-                'enabled': False,
-                'output_directory': './recordings',
-                'fps': 30,
-                'recording_width': 1920,
-                'recording_height': 1080,
-                'chunk_duration_minutes': 60,
-                'total_rotation_minutes': 1440,
-                'cleanup_incomplete': True,
-                'disk_space_alert_gb': 10
-            })
-        }
+        global session_bbox_toggles
         
-        with open(config_file, 'w') as f:
-            yaml.dump(config, f, default_flow_style=False)
+        # New bbox toggles from the request - store in memory ONLY
+        new_bbox_toggles = data.get('bbox_toggles', {})
+        old_bbox_toggles = session_bbox_toggles.copy()
+        session_bbox_toggles = new_bbox_toggles
         
-        return jsonify({'status': 'saved'})
+        # If the wall is running, detect which streams changed their BBOX toggle
+        if streamer.is_running:
+            streams_info = parse_deepstream_uris()
+            if streams_info:
+                for i, info in enumerate(streams_info):
+                    idx_str = str(i)
+                    new_val = session_bbox_toggles.get(idx_str, False)
+                    old_val = old_bbox_toggles.get(idx_str, False)
+                    
+                    if new_val != old_val:
+                        target_url = info['bbox'] if new_val else info['source']
+                        logger.info(f"Dynamic BBOX update: Stream {i} toggle changed to {new_val}. URL: {target_url}")
+                        streamer.update_stream(i, target_url)
+        
+        return jsonify({'status': 'saved_in_memory'})
     except Exception as e:
         logger.error(f"Error in api_set_config: {str(e)}")
         return jsonify({'error': str(e)}), 500
@@ -519,27 +517,18 @@ def api_set_bbox_mode():
 
 @app.route('/api/streams', methods=['GET'])
 def api_get_streams():
-    """Get streams based on current mode (dev_mode and bbox_on)"""
-    global bbox_on_mode
+    """Get list of available streams based on per-stream BBOX mode toggles"""
     try:
-        dev_mode = request.args.get('dev_mode', 'false').lower() == 'true'
-        bbox_on = request.args.get('bbox_on', str(bbox_on_mode).lower()).lower() == 'true'
-        
         config = load_config()
         
-        if dev_mode:
-            streams = config.get('test_vids', [])
-            logger.info(f"Returning {len(streams)} test videos")
-        elif bbox_on:
-            streams = get_bbox_mode_streams()
-            logger.info(f"Returning {len(streams)} BBOX_ON streams (localhost ports)")
-        else:
-            streams = parse_deepstream_uris()
-            if not streams:
-                streams = config.get('streams', [])
-            logger.info(f"Returning {len(streams)} deepstream URIs")
+        # This function handles the per-stream toggle logic based on the loaded config
+        streams, dev_mode = get_streams_from_config()
         
-        return jsonify({'streams': streams})
+        return jsonify({
+            'streams': streams,
+            'dev_mode': dev_mode,
+            'bbox_toggles': session_bbox_toggles
+        })
     except Exception as e:
         logger.error(f"Error getting streams: {str(e)}")
         return jsonify({'error': str(e), 'streams': []}), 500

@@ -49,6 +49,93 @@ body {
     overflow: hidden; /* Content inside will scroll, not the frame */
 }
 
+/* Stream Control Overlay Styles */
+.video-container {
+    position: relative;
+    flex: 1;
+    overflow-y: auto;
+    background: #000;
+}
+
+.streams-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none; /* Let clicks pass to the video container's scroll */
+    display: grid;
+}
+
+.stream-cell-controls {
+    position: relative;
+    pointer-events: auto; /* Enable interaction for buttons */
+}
+
+.kebab-menu {
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    width: 24px;
+    height: 24px;
+    background: rgba(0, 0, 0, 0.7);
+    border: 1px solid #00ff41;
+    border-radius: 4px;
+    color: #00ff41;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    cursor: pointer;
+    z-index: 100;
+    gap: 2px;
+}
+
+.kebab-menu span {
+    width: 3px;
+    height: 3px;
+    background-color: #00ff41;
+    border-radius: 50%;
+}
+
+.kebab-menu:hover {
+    background: #00ff41;
+}
+
+.kebab-menu:hover span {
+    background-color: #000;
+}
+
+.dropdown-menu {
+    position: absolute;
+    top: 30px;
+    right: 5px;
+    background: #0a0a0a;
+    border: 1px solid #00ff41;
+    border-radius: 4px;
+    padding: 8px;
+    display: none;
+    z-index: 101;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.5);
+    min-width: 120px;
+}
+
+.dropdown-menu.active {
+    display: block;
+}
+
+.dropdown-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: #00ff41;
+}
+
+.dropdown-item input[type="checkbox"] {
+    cursor: pointer;
+}
+
 .header {
     padding: 15px;
     background: #00ff41;
