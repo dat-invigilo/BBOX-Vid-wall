@@ -138,6 +138,7 @@ def parse_deepstream_uris():
                         # Use ConfigParser but handle multiple source/sink sections
                         # configparser doesn't support multiple identical keys, so we parse manually
                         current_source_uri = None
+                        current_rtsp_port = None
                         with open(config_file, 'r') as f:
                             for line in f:
                                 line = line.strip()
@@ -146,16 +147,25 @@ def parse_deepstream_uris():
                                     line = line.split('#')[0].strip()
                                 
                                 if line.startswith('uri = '):
-                                    current_source_uri = line.replace('uri = ', '').strip()
-                                elif line.startswith('rtsp-port = '):
-                                    port = line.replace('rtsp-port = ', '').strip()
+                                    # If we have a previous stream, save it (even without BBOX)
                                     if current_source_uri:
-                                        bbox_uri = f'rtsp://localhost:{port}/ds-test'
-                                        streams_info.append({
-                                            'source': current_source_uri,
-                                            'bbox': bbox_uri
-                                        })
-                                        current_source_uri = None
+                                        stream_info = {'source': current_source_uri}
+                                        if current_rtsp_port:
+                                            stream_info['bbox'] = f'rtsp://localhost:{current_rtsp_port}/ds-test'
+                                        streams_info.append(stream_info)
+                                    
+                                    # Start new stream
+                                    current_source_uri = line.replace('uri = ', '').strip()
+                                    current_rtsp_port = None
+                                elif line.startswith('rtsp-port = '):
+                                    current_rtsp_port = line.replace('rtsp-port = ', '').strip()
+                        
+                        # Don't forget the last stream
+                        if current_source_uri:
+                            stream_info = {'source': current_source_uri}
+                            if current_rtsp_port:
+                                stream_info['bbox'] = f'rtsp://localhost:{current_rtsp_port}/ds-test'
+                            streams_info.append(stream_info)
                     except Exception as e:
                         logger.warning(f"Could not read config for GPU {gpu_id}: {str(e)}")
     except Exception as e:
@@ -190,9 +200,11 @@ def get_streams_from_config():
                 # Check if this specific stream has BBOX enabled
                 # We use string keys for the dict because JSON/YAML keys can be tricky
                 is_bbox = bbox_toggles.get(str(i), False)
-                if is_bbox:
+                # Only use BBOX if it's available in the config
+                if is_bbox and 'bbox' in info:
                     streams.append(info['bbox'])
                 else:
+                    # Use source URL if BBOX not available or not toggled
                     streams.append(info['source'])
     
     return streams, dev_mode
@@ -279,7 +291,7 @@ class VideoWallStreamer:
 streamer = VideoWallStreamer()
 
 
-def generate_placeholder_frame(width=1280, height=720):
+def generate_placeholder_frame(width=1280, height=720, text="Waiting for video stream..."):
     """Generate a placeholder/waiting frame using PIL"""
     # Create a numpy array (BGR format for consistency)
     frame = np.zeros((height, width, 3), dtype=np.uint8)
@@ -290,7 +302,6 @@ def generate_placeholder_frame(width=1280, height=720):
     draw = ImageDraw.Draw(pil_image)
     
     # Add text using PIL
-    text = "Waiting for video stream..."
     try:
         # Try to use a nice font if available
         font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 32)
@@ -400,6 +411,95 @@ def video_feed():
     """Video stream endpoint"""
     return Response(
         generate_frames(),
+        mimetype='multipart/x-mixed-replace; boundary=frame'
+    )
+
+
+def generate_single_stream_frames(stream_index):
+    """Generate frames from a single stream for fullscreen view"""
+    stream_id = f"stream_{stream_index}_{int(time.time())}"
+    logger.info(f"generate_single_stream_frames({stream_id}): Starting fullscreen for stream {stream_index}")
+    
+    frame_count = 0
+    
+    # Wait for video wall to be running
+    timeout = 10
+    elapsed = 0
+    wait_interval = 0.5
+    
+    while not streamer.is_running and elapsed < timeout:
+        logger.debug(f"generate_single_stream_frames({stream_id}): Waiting for streamer... ({elapsed:.1f}s)")
+        placeholder = generate_placeholder_frame()
+        try:
+            frame_bytes = encode_frame_to_jpeg(placeholder)
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n'
+                   b'Content-Length: ' + str(len(frame_bytes)).encode() + b'\r\n\r\n' +
+                   frame_bytes + b'\r\n')
+        except Exception as e:
+            logger.error(f"generate_single_stream_frames({stream_id}): Error creating placeholder: {str(e)}")
+            break
+        
+        time.sleep(wait_interval)
+        elapsed += wait_interval
+    
+    if not streamer.is_running:
+        logger.warning(f"generate_single_stream_frames({stream_id}): Timeout waiting for streamer")
+        return
+    
+    # Check if stream index is valid
+    with streamer.lock:
+        if stream_index not in streamer.wall.handlers or not streamer.wall.handlers[stream_index]:
+            logger.error(f"generate_single_stream_frames({stream_id}): Invalid stream index {stream_index}")
+            error_frame = generate_placeholder_frame(text=f"Invalid Stream {stream_index}")
+            try:
+                frame_bytes = encode_frame_to_jpeg(error_frame)
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n'
+                       b'Content-Length: ' + str(len(frame_bytes)).encode() + b'\r\n\r\n' +
+                       frame_bytes + b'\r\n')
+            except:
+                pass
+            return
+    
+    logger.info(f"generate_single_stream_frames({stream_id}): Starting frame stream for index {stream_index}")
+    
+    while streamer.is_running:
+        with streamer.lock:
+            handler = streamer.wall.handlers.get(stream_index)
+            if handler:
+                frame = handler.get_frame()
+            else:
+                frame = None
+        
+        if frame is None:
+            time.sleep(0.01)
+            continue
+        
+        try:
+            frame_bytes = encode_frame_to_jpeg(frame)
+            frame_count += 1
+            
+            if frame_count % 300 == 0:
+                logger.debug(f"generate_single_stream_frames({stream_id}): Sent {frame_count} frames")
+            
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n'
+                   b'Content-Length: ' + str(len(frame_bytes)).encode() + b'\r\n\r\n' +
+                   frame_bytes + b'\r\n')
+        except Exception as e:
+            logger.error(f"generate_single_stream_frames({stream_id}): Error encoding frame: {str(e)}")
+            break
+    
+    logger.info(f"generate_single_stream_frames({stream_id}): Stream ended after {frame_count} frames")
+
+
+@app.route('/stream/<int:stream_index>')
+def stream_fullscreen(stream_index):
+    """Fullscreen stream endpoint for individual camera"""
+    logger.debug(f"Fullscreen request for stream {stream_index}")
+    return Response(
+        generate_single_stream_frames(stream_index),
         mimetype='multipart/x-mixed-replace; boundary=frame'
     )
 
@@ -532,6 +632,44 @@ def api_get_streams():
     except Exception as e:
         logger.error(f"Error getting streams: {str(e)}")
         return jsonify({'error': str(e), 'streams': []}), 500
+
+
+@app.route('/api/reparse-configs', methods=['POST'])
+def api_reparse_configs():
+    """Force re-parse of deepstream config files and sync live wall"""
+    try:
+        logger.info("Force re-parsing deepstream configs (POST /api/reparse-configs)")
+        streams_info = parse_deepstream_uris()
+        
+        updates_applied = 0
+        if streamer.is_running and streamer.wall:
+            for i, info in enumerate(streams_info):
+                # Don't try to update more streams than the wall has cells
+                if i >= streamer.wall.total_cells:
+                    break
+                    
+                # Determine what the current URL should be for this cell
+                is_bbox = session_bbox_toggles.get(str(i), False)
+                if is_bbox and 'bbox' in info:
+                    target_url = info['bbox']
+                else:
+                    target_url = info['source']
+                
+                # Check if the URL changed for this live slot
+                current_url = streamer.wall.streams[i]
+                if target_url != current_url:
+                    logger.info(f"Sync: Stream {i} changed from {current_url} to {target_url}")
+                    streamer.update_stream(i, target_url)
+                    updates_applied += 1
+        
+        return jsonify({
+            'status': 'success', 
+            'total_streams': len(streams_info),
+            'updates': updates_applied
+        })
+    except Exception as e:
+        logger.error(f"Error in re-parsing configs: {str(e)}")
+        return jsonify({'status': 'error', 'error': str(e)}), 500
 
 
 # ============================================================================

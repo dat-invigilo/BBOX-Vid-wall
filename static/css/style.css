@@ -136,6 +136,92 @@ body {
     cursor: pointer;
 }
 
+.dropdown-item.clickable {
+    cursor: pointer;
+    padding: 4px;
+}
+
+.dropdown-item.clickable:hover {
+    background: #00ff41;
+    color: #000;
+}
+
+.dropdown-divider {
+    height: 1px;
+    background: #004d19;
+    margin: 4px 0;
+}
+
+/* Fullscreen expansion logic */
+.fullscreen-video-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: #000;
+    z-index: 10000;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.fullscreen-video-overlay img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+}
+
+.stream-cell-controls.is-fullscreen {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    z-index: 10001 !important; /* Above video */
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    pointer-events: none;
+}
+
+.stream-cell-controls.is-fullscreen > * {
+    pointer-events: auto; /* Re-enable menu clicks */
+}
+
+/* Ensure the video feed stays visible behind the fullscreen overlay */
+.video-feed {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    height: auto;
+    display: block;
+}
+
+/* Add a log console style */
+.log-console {
+    position: relative; /* Changed from fixed since it's now wrapped */
+    bottom: 0px;
+    left: 0px;
+    width: 400px;
+    height: 150px;
+    background: rgba(0, 10, 0, 0.8);
+    border: 1px solid #00ff41;
+    color: #00ff41;
+    font-family: 'Courier New', monospace;
+    font-size: 10px;
+    padding: 10px;
+    overflow-y: auto;
+    z-index: 10000;
+    pointer-events: none;
+    display: flex;
+    flex-direction: column-reverse; /* Newest logs at bottom */
+}
+
+.log-entry {
+    margin-bottom: 2px;
+}
+
 .header {
     padding: 15px;
     background: #00ff41;

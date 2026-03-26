@@ -94,7 +94,9 @@
                 <!-- Streams List with Per-Stream Toggle -->
                 <div class="section">
                     <div class="section-title" id="streamsLabel">RTSP Streams</div>
-                    <button class="btn-secondary btn-small" onclick="reloadStreams()" style="width: 100%; margin-bottom: 10px;">🔄 Reload Streams</button>
+                    <div class="button-group" style="margin-top: 0; margin-bottom: 10px;">
+                        <button class="btn-secondary btn-small" id="reparseBtn" onclick="reparseConfigs()" style="width: 100%;" title="Re-parse deepstream config files">⚙️ Re-parse Configs</button>
+                    </div>
                     
                     <div id="streamListContainer" style="margin-top: 10px; max-height: 400px; min-height: 50px; overflow-y: auto; border: 1px solid #004d19; padding: 10px; background: rgba(0, 255, 65, 0.05); color: #00ff41;">
                         <!-- Streams with toggles will be injected here -->
@@ -181,10 +183,23 @@
                     <!-- New Streams Overlay for Controls -->
                     <div id="streamsOverlay" class="streams-overlay"></div>
 
+                    <!-- Dedicated Fullscreen Overlay (Hidden by default) -->
+                    <div id="fullscreenOverlay" class="fullscreen-video-overlay" style="display: none;">
+                        <img id="fullscreenFeed" src="" alt="Fullscreen Feed">
+                        <div id="fullscreenControls" class="stream-cell-controls is-fullscreen" style="background: transparent !important; pointer-events: none;">
+                            <!-- The kebab menu will be cloned here in JS -->
+                        </div>
+                    </div>
+
                     <div class="placeholder" id="placeholder">
                         <div class="placeholder-icon">📺</div>
                         <div>Click <strong>Start</strong> to begin</div>
                     </div>
+                </div>
+                <!-- Frontend Log Console -->
+                <div id="logConsoleContainer" style="position: fixed; bottom: 20px; left: 20px; z-index: 10000; pointer-events: none;">
+                    <button id="toggleLogBtn" onclick="toggleLogConsole()" style="position: absolute; bottom: 0; left: 0; width: 30px; height: 30px; padding: 0; pointer-events: auto; background: rgba(0, 10, 0, 0.8); border: 1px solid #00ff41; color: #00ff41; cursor: pointer; z-index: 10001;" title="Show Logs">📝</button>
+                    <div id="logConsole" class="log-console" style="display: none;"></div>
                 </div>
             </div>
         </div>
@@ -194,7 +209,38 @@
         const API_BASE = window.location.origin;
         let statusCheckInterval = null;
 
+        function toggleLogConsole() {
+            const console = document.getElementById('logConsole');
+            const btn = document.getElementById('toggleLogBtn');
+            if (console.style.display === 'none') {
+                console.style.display = 'flex';
+                btn.style.bottom = '155px';
+                btn.innerHTML = '📜';
+                btn.title = 'Hide Logs';
+            } else {
+                console.style.display = 'none';
+                btn.style.bottom = '0';
+                btn.innerHTML = '📝';
+                btn.title = 'Show Logs';
+            }
+        }
+
+        function addLog(msg, type = 'info') {
+            const console = document.getElementById('logConsole');
+            const time = new Date().toLocaleTimeString('en-GB', { hour12: false });
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.innerHTML = `<span style="opacity: 0.6">[${time}]</span> ${msg}`;
+            console.prepend(entry);
+            
+            // Limit to 20 logs
+            if (console.children.length > 20) {
+                console.lastElementChild.remove();
+            }
+        }
+
         function showMessage(msg, type = 'info') {
+            addLog(msg, type);
             const msgDiv = document.getElementById('messages');
             const html = `<div class="message ${type}">${msg}</div>`;
             msgDiv.insertAdjacentHTML('beforeend', html);
@@ -209,11 +255,20 @@
         // Kebab and Dropdown helper
         function toggleKebab(event, index) {
             event.stopPropagation();
-            const dropdown = document.getElementById(`dropdown_${index}`);
             
-            // Close all other dropdowns
-            document.querySelectorAll('.dropdown-menu').forEach(el => {
-                if (el.id !== `dropdown_${index}`) el.classList.remove('active');
+            // Find the dropdown relative to the clicked kebab menu (handles fullscreen cloning)
+            const kebabMenu = event.currentTarget;
+            const parent = kebabMenu.closest('.stream-cell-controls');
+            const dropdown = parent.querySelector('.dropdown-menu');
+            
+            if (!dropdown) {
+                console.error('Dropdown not found for index', index);
+                return;
+            }
+            
+            // Close all other dropdowns in the same container
+            parent.querySelectorAll('.dropdown-menu').forEach(el => {
+                if (el !== dropdown) el.classList.remove('active');
             });
 
             dropdown.classList.toggle('active');
@@ -271,6 +326,11 @@
                                                 <div class="dropdown-item">
                                                     <input type="checkbox" id="bbox_check_overlay_${i}" ${is_bbox ? 'checked' : ''} onchange="onPerStreamBboxToggle(${i}, this.checked)">
                                                     <label for="bbox_check_overlay_${i}">BBOX MODE</label>
+                                                </div>
+                                                <div class="dropdown-divider"></div>
+                                                <div class="dropdown-item clickable" onclick="toggleFullscreen(${i})">
+                                                    <span class="icon">⛶</span>
+                                                    <span>FULLSCREEN</span>
                                                 </div>
                                             </div>
                                         `;
@@ -472,6 +532,40 @@
                 });
         }
 
+        function reparseConfigs() {
+            /**
+             * Trigger backend to re-parse deepstream config files
+             * and dynamically update running wall if necessary
+             */
+            const btn = document.getElementById('reparseBtn');
+            const originalText = btn.textContent;
+            btn.textContent = '⚙️ Parsing...';
+            btn.disabled = true;
+            
+            addLog('Requesting deepstream config re-parse...', 'info');
+            
+            fetch(`${API_BASE}/api/reparse-configs`, { method: 'POST' })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        addLog(`Parse complete. ${data.updates || 0} streams updated in live wall.`, 'success');
+                        showMessage(`Re-parse successful. Found ${data.total_streams} streams.`, 'success');
+                        reloadStreams(); // Refresh UI list
+                    } else {
+                        throw new Error(data.error || 'Unknown error');
+                    }
+                })
+                .catch(e => {
+                    console.error('[reparseConfigs] Error:', e);
+                    showMessage(`Reparse failed: ${e.message}`, 'error');
+                    addLog(`Reparse failed: ${e.message}`, 'error');
+                })
+                .finally(() => {
+                    btn.textContent = originalText;
+                    btn.disabled = false;
+                });
+        }
+
         function onPerStreamBboxToggle(index, checked) {
             console.log(`[onPerStreamBboxToggle] Stream ${index} -> ${checked}`);
             
@@ -501,6 +595,44 @@
             saveConfig(bbox_toggles);
             
             showMessage(`Stream ${index+1} BBOX updated`, 'info');
+        }
+
+        function toggleFullscreen(index) {
+            const overlay = document.getElementById('fullscreenOverlay');
+            const fsFeed = document.getElementById('fullscreenFeed');
+            const fsControls = document.getElementById('fullscreenControls');
+            
+            const isClosing = overlay.style.display !== 'none';
+
+            if (isClosing) {
+                addLog(`Exiting Fullscreen...`, 'info');
+                overlay.style.display = 'none';
+                fsFeed.src = ""; // Stop stream
+                fsControls.innerHTML = "";
+            } else {
+                addLog(`Opening Isolated Stream ${index + 1}...`, 'info');
+                
+                // Show the overlay
+                overlay.style.display = 'flex';
+                
+                // Set the specific stream source
+                // Backend endpoint /stream/<index> provides individual MJPEG
+                fsFeed.src = `/stream/${index}`;
+                
+                // Clone the specific kebab menu so controls still work in fullscreen
+                const originalMenu = document.querySelector(`#streamsOverlay .stream-cell-controls:nth-child(${index + 1})`).innerHTML;
+                fsControls.innerHTML = originalMenu;
+                
+                // Update the icon/instruction in the cloned menu if needed
+                const items = fsControls.querySelectorAll('.dropdown-item');
+                items.forEach(item => {
+                    if (item.innerText.includes('FULLSCREEN')) {
+                        item.innerHTML = '<span class="icon">⛶</span><span>EXIT FULLSCREEN</span>';
+                    }
+                });
+
+                addLog(`Stream ${index + 1} isolated.`, 'success');
+            }
         }
 
         function toggleAllBbox(checked) {
