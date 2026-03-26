@@ -741,7 +741,23 @@
                     const container = document.getElementById('streamCheckboxes');
                     container.innerHTML = '';
                     streams.forEach((stream, idx) => {
-                        const streamName = stream.split('/').pop() || `Stream ${idx}`;
+                        // Better stream label: try to get a meaningful part of the URL
+                        let streamName = `Stream ${idx + 1}`;
+                        try {
+                            if (stream.includes('@')) {
+                                // RTSP with auth: get the part after the @
+                                streamName = stream.split('@')[1];
+                            } else {
+                                streamName = stream;
+                            }
+                            // Replace any long parts or take the end if it's too long
+                            if (streamName.length > 40) {
+                                streamName = '...' + streamName.substring(streamName.length - 37);
+                            }
+                        } catch (e) {
+                            streamName = `Stream ${idx + 1}`;
+                        }
+
                         const html = `
                             <div style="margin-bottom: 5px;">
                                 <input type="checkbox" id="streamCheck_${idx}" value="${idx}">
@@ -896,7 +912,8 @@
             
             // Status checks
             updateStatus();
-            statusCheckInterval = setInterval(updateStatus, 2000);
+            // Reduced frequency to 5 seconds to reduce backend log volume
+            statusCheckInterval = setInterval(updateStatus, 5000);
         });
 
         window.addEventListener('unload', () => {

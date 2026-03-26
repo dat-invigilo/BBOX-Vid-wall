@@ -100,33 +100,46 @@ class FFmpegStreamRecorder:
     def _start_ffmpeg_recording(self, output_file: str):
         """Start FFmpeg encoding to MP4"""
         try:
+            # Place -t BEFORE -i to limit input duration (often more reliable for stream capture)
+            # or keep it after to limit output. For RTSP, -t before -i often results in 
+            # ffmpeg closing the input stream exactly at the time limit.
             cmd = [
                 'ffmpeg',
                 '-rtsp_transport', 'tcp' if self.stream_source.startswith('rtsp://') else 'auto',
+                '-t', str(self.chunk_duration_minutes * 60),  # Duration limit
                 '-i', self.stream_source,
-                '-vf', f'scale={self.width}:{self.height}',  # Resize while recording
-                '-c:v', 'libx264',      # H.264 codec
-                '-preset', 'fast',      # Encoding speed (ultrafast/fast/medium)
-                '-crf', '23',           # Quality (lower = better, 0-51)
-                '-c:a', 'aac',          # Audio codec
-                '-b:a', '128k',         # Audio bitrate
-                '-t', str(self.chunk_duration_minutes * 60),  # Duration in seconds
-                '-y',                   # Overwrite output file
+                '-vf', f'scale={self.width}:{self.height}',
+                '-c:v', 'libx264',
+                '-preset', 'fast',
+                '-crf', '23',
+                '-c:a', 'aac',
+                '-b:a', '128k',
+                '-y',
                 output_file
             ]
             
             logger.debug(f"Stream {self.stream_id}: Starting FFmpeg recording: {' '.join(cmd)}")
             
+            # Using stderr/stdout redirection to DEVNULL or a logger to avoid pipe buffer issues
+            # that can cause FFmpeg to hang if the pipe isn't drained.
             self.process = subprocess.Popen(
                 cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
             )
             
             logger.info(f"Stream {self.stream_id}: Recording to {output_file} (PID: {self.process.pid})")
             
             # Wait for process to complete (duration/chunk timeout)
+            start_time = time.time()
             self.process.wait()
+            duration = time.time() - start_time
+            
+            # If FFmpeg exits too quickly (e.g. less than 5 seconds), it's likely a connection error
+            if duration < 5:
+                logger.warning(f"Stream {self.stream_id}: FFmpeg exited in {duration:.1f}s. Waiting before retry...")
+                time.sleep(5)
+            
             logger.info(f"Stream {self.stream_id}: FFmpeg process completed for chunk {self.current_chunk}")
             
         except Exception as e:
@@ -134,6 +147,15 @@ class FFmpegStreamRecorder:
         finally:
             self._cleanup_process()
     
+    def get_status(self):
+        """Get current status of this recorder"""
+        return {
+            "is_recording": self.is_recording,
+            "current_chunk": self.current_chunk,
+            "last_rotation": self.last_rotation_time,
+            "output_dir": self.output_directory
+        }
+
     def _record_loop(self):
         """Main recording loop with chunk rotation"""
         logger.info(f"Stream {self.stream_id}: Recording loop started")
@@ -226,8 +248,14 @@ class FFmpegRecordingManager:
     
     def get_status(self):
         """Get recording status"""
+        stream_details = {}
+        for i, recorder in self.recorders.items():
+            if recorder:
+                stream_details[i] = recorder.get_status()
+        
         return {
             "is_recording": len(self.recorders) > 0,
             "streams_recording": len(self.recorders),
-            "output_directory": self.output_directory
+            "output_directory": self.output_directory,
+            "streams": stream_details
         }

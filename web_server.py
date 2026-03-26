@@ -698,8 +698,15 @@ def api_savemode_config():
         streams = config.get('test_vids', [])
         logger.debug(f"api_savemode_config: Returning {len(streams)} test videos")
     else:
-        streams = config.get('streams', [])
-        logger.debug(f"api_savemode_config: Returning {len(streams)} RTSP streams")
+        # Instead of just reading from config.yaml, use the parsed DeepStream URIs
+        streams_info = parse_deepstream_uris()
+        if streams_info:
+            # Use the source (camera) URIs for recording
+            streams = [info['source'] for info in streams_info]
+            logger.info(f"api_savemode_config: Returning {len(streams)} parsed DeepStream streams")
+        else:
+            streams = config.get('streams', [])
+            logger.debug(f"api_savemode_config: Returning {len(streams)} RTSP streams from config.yaml")
     
     return jsonify({
         'dev_mode': dev_mode,
@@ -727,8 +734,9 @@ def api_savemode_start():
             streams = config.get('test_vids', [])
             logger.info(f"api_savemode_start: Using {len(streams)} test videos")
         else:
-            streams = config.get('streams', [])
-            logger.info(f"api_savemode_start: Using {len(streams)} RTSP streams")
+            # Use get_streams_from_config to get the correct URIs (respecting BBOX toggles)
+            streams, _ = get_streams_from_config()
+            logger.info(f"api_savemode_start: Using {len(streams)} RTSP streams (BBOX-aware)")
         
         if not selected_indices:
             return jsonify({'error': 'No streams selected'}), 400
