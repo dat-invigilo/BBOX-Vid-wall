@@ -363,8 +363,8 @@
         }
 
         function startWall() {
-            const cols = parseInt(document.getElementById('cols').value);
-            const rows = parseInt(document.getElementById('rows').value);
+            let cols = parseInt(document.getElementById('cols').value);
+            let rows = parseInt(document.getElementById('rows').value);
             const resolution = document.getElementById('resolution').value;
             const devMode = document.getElementById('devMode').checked;
             
@@ -384,6 +384,16 @@
             if (!streams.length) {
                 showMessage('Please enter at least one stream', 'error');
                 return;
+            }
+
+            // AUTO-ADJUST GRID: use 2 columns by default unless user specified more
+            // and calculate enough rows to fit all streams
+            if (cols === 2 && rows === 2) {
+                cols = 2;
+                rows = Math.ceil(streams.length / cols);
+                document.getElementById('cols').value = cols;
+                document.getElementById('rows').value = rows;
+                addLog(`Auto-adjusting grid to ${cols}x${rows} for ${streams.length} streams`, 'info');
             }
 
             const [width, height] = resolution.split('x').map(Number);
