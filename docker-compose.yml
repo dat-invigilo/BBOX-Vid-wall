@@ -26,6 +26,8 @@ services:
       - ./logs:/app/logs
       # Shared volume from host
       - /home/invigilo/shared_volume:/app/shared_volume:rw
+      # Recordings output directory
+      - /home/invigilo/recordings:/app/recordings:rw
     
     # Resource limits
     deploy:

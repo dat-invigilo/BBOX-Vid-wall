@@ -42,6 +42,7 @@ class FFmpegStreamRecorder:
         self.height = height
         
         self.is_recording = False
+        self.is_connected = False  # Track active connection health
         self.process = None
         self.thread = None
         self.current_chunk = 0
@@ -54,9 +55,11 @@ class FFmpegStreamRecorder:
         logger.info(f"Stream {self.stream_id}: Recorder initialized for {stream_source}")
     
     def _get_output_filepath(self, chunk_index: int) -> str:
-        """Generate output file path for chunk"""
-        timestamp = int(time.time())
-        filename = f"stream_{self.stream_id}_chunk_{chunk_index:04d}_{timestamp}.mp4"
+        """Generate output file path for chunk with full date and time"""
+        from datetime import datetime
+        now = datetime.now()
+        timestamp_str = now.strftime("%Y%m%d_%H%M%S")
+        filename = f"stream_{self.stream_id}_chunk_{chunk_index:04d}_{timestamp_str}.mp4"
         return os.path.join(self.output_directory, filename)
     
     def start(self):
@@ -99,58 +102,75 @@ class FFmpegStreamRecorder:
     
     def _start_ffmpeg_recording(self, output_file: str):
         """Start FFmpeg encoding to MP4"""
-        try:
-            # Place -t BEFORE -i to limit input duration (often more reliable for stream capture)
-            # or keep it after to limit output. For RTSP, -t before -i often results in 
-            # ffmpeg closing the input stream exactly at the time limit.
-            cmd = [
-                'ffmpeg',
-                '-rtsp_transport', 'tcp' if self.stream_source.startswith('rtsp://') else 'auto',
-                '-t', str(self.chunk_duration_minutes * 60),  # Duration limit
-                '-i', self.stream_source,
-                '-vf', f'scale={self.width}:{self.height}',
-                '-c:v', 'libx264',
-                '-preset', 'fast',
-                '-crf', '23',
-                '-c:a', 'aac',
-                '-b:a', '128k',
-                '-y',
-                output_file
-            ]
-            
-            logger.debug(f"Stream {self.stream_id}: Starting FFmpeg recording: {' '.join(cmd)}")
-            
-            # Using stderr/stdout redirection to DEVNULL or a logger to avoid pipe buffer issues
-            # that can cause FFmpeg to hang if the pipe isn't drained.
-            self.process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
-            
-            logger.info(f"Stream {self.stream_id}: Recording to {output_file} (PID: {self.process.pid})")
-            
-            # Wait for process to complete (duration/chunk timeout)
-            start_time = time.time()
-            self.process.wait()
-            duration = time.time() - start_time
-            
-            # If FFmpeg exits too quickly (e.g. less than 5 seconds), it's likely a connection error
-            if duration < 5:
-                logger.warning(f"Stream {self.stream_id}: FFmpeg exited in {duration:.1f}s. Waiting before retry...")
-                time.sleep(5)
-            
-            logger.info(f"Stream {self.stream_id}: FFmpeg process completed for chunk {self.current_chunk}")
-            
-        except Exception as e:
-            logger.error(f"Stream {self.stream_id}: FFmpeg recording error - {str(e)}")
-        finally:
-            self._cleanup_process()
+        retry_delay = 5
+        max_retries = 1000  # High number to keep trying during long outages
+        current_retry = 0
+        
+        while self.is_recording:
+            try:
+                # Place -t BEFORE -i to limit input duration (often more reliable for stream capture)
+                # or keep it after to limit output. For RTSP, -t before -i often results in 
+                # ffmpeg closing the input stream exactly at the time limit.
+                cmd = [
+                    'ffmpeg',
+                    '-rtsp_transport', 'tcp' if self.stream_source.startswith('rtsp://') else 'auto',
+                    '-t', str(self.chunk_duration_minutes * 60),  # Duration limit
+                    '-i', self.stream_source,
+                    '-vf', f'scale={self.width}:{self.height}',
+                    '-c:v', 'libx264',
+                    '-preset', 'fast',
+                    '-crf', '23',
+                    '-c:a', 'aac',
+                    '-b:a', '128k',
+                    '-y',
+                    output_file
+                ]
+                
+                logger.debug(f"Stream {self.stream_id}: Starting FFmpeg recording: {' '.join(cmd)}")
+                
+                # Using stderr/stdout redirection to DEVNULL or a logger to avoid pipe buffer issues
+                # that can cause FFmpeg to hang if the pipe isn't drained.
+                self.process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+                
+                self.is_connected = True
+                logger.info(f"Stream {self.stream_id}: Recording to {output_file} (PID: {self.process.pid})")
+                
+                # Wait for process to complete (duration/chunk timeout)
+                start_time = time.time()
+                self.process.wait()
+                duration = time.time() - start_time
+                self.is_connected = False
+                
+                # If FFmpeg exits too quickly (e.g. less than 5 seconds), it's likely a connection error
+                if duration < 5:
+                    current_retry += 1
+                    logger.warning(f"Stream {self.stream_id}: FFmpeg exited in {duration:.1f}s. "
+                                f"Retry {current_retry}/{max_retries} in {retry_delay}s...")
+                    time.sleep(retry_delay)
+                else:
+                    # Successful recording of some duration
+                    logger.info(f"Stream {self.stream_id}: FFmpeg process completed for chunk {self.current_chunk}")
+                    break
+                
+                if current_retry >= max_retries:
+                    logger.error(f"Stream {self.stream_id}: Max retries reached for chunk {self.current_chunk}")
+                    break
+                
+            except Exception as e:
+                logger.error(f"Stream {self.stream_id}: FFmpeg recording error - {str(e)}")
+                time.sleep(retry_delay)
+            finally:
+                self._cleanup_process()
     
     def get_status(self):
         """Get current status of this recorder"""
         return {
             "is_recording": self.is_recording,
+            "is_connected": self.is_connected,
             "current_chunk": self.current_chunk,
             "last_rotation": self.last_rotation_time,
             "output_dir": self.output_directory
@@ -170,10 +190,20 @@ class FFmpegStreamRecorder:
                 self._start_ffmpeg_recording(output_file)
                 
                 # Check file was created and has data
-                if os.path.exists(output_file) and os.path.getsize(output_file) > 1000:
-                    logger.info(f"Stream {self.stream_id}: Chunk {self.current_chunk} completed successfully")
+                file_exists = os.path.exists(output_file)
+                file_size = os.path.getsize(output_file) if file_exists else 0
+                
+                if file_exists and file_size > 5000: # Increased threshold (~5KB) to ensure it's not just a tiny header
+                    logger.info(f"Stream {self.stream_id}: Chunk {self.current_chunk} completed successfully ({file_size} bytes)")
                 else:
-                    logger.warning(f"Stream {self.stream_id}: Chunk {self.current_chunk} may be incomplete or corrupted")
+                    logger.warning(f"Stream {self.stream_id}: Chunk {self.current_chunk} is empty or too small ({file_size} bytes)")
+                    # If file is too small, delete it to avoid cluttering with broken headers
+                    if file_exists:
+                        try:
+                            os.remove(output_file)
+                            logger.info(f"Stream {self.stream_id}: Removed invalid chunk {output_file}")
+                        except:
+                            pass
                 
                 # Check rotation policy
                 elapsed_minutes = (time.time() - self.last_rotation_time) / 60

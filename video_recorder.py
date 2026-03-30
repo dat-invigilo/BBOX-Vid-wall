@@ -44,20 +44,35 @@ class VideoWallRecorder:
         Args:
             streams_dict: {stream_id: stream_source_url, ...}
         """
+        # Convert simple format to extended format internally
+        extended_dict = {str(k): v for k, v in streams_dict.items()}
+        return self.start_recording_extended(extended_dict)
+
+    def start_recording_extended(self, streams_dict: Dict[str, str]) -> bool:
+        """
+        Start recording selected streams (extended version supporting BBOX/Source)
+        
+        Args:
+            streams_dict: {stream_identifier: stream_source_url, ...}
+        """
         with self.lock:
-            if self.is_recording:
-                logger.warning("Recording already in progress")
-                return False
-            
+            # We no longer check if self.is_recording is True to allow adding streams
             try:
                 # Create output directory
                 Path(self.output_dir).mkdir(parents=True, exist_ok=True)
                 
-                self.session_start_time = time.time()
+                if not self.session_start_time:
+                    self.session_start_time = time.time()
+                
                 self.is_recording = True
                 
                 # Spawn recorder for each stream
                 for stream_id, stream_source in streams_dict.items():
+                    if stream_id in self.recording_threads:
+                        logger.warning(f"Stream {stream_id} already being recorded")
+                        continue
+
+                    # If stream_id is "0_bbox", output will be in stream_0_bbox folder
                     stream_output_dir = os.path.join(self.output_dir, f"stream_{stream_id}")
                     
                     recorder = FFmpegStreamRecorder(
@@ -76,13 +91,29 @@ class VideoWallRecorder:
                 # Save metadata
                 self._save_metadata()
                 
-                logger.info(f"Recording started for {len(streams_dict)} streams")
+                logger.info(f"Recording active for {len(self.recording_threads)} streams")
                 return True
                 
             except Exception as e:
                 logger.error(f"Failed to start recording: {str(e)}")
-                self.is_recording = False
+                if not self.recording_threads:
+                    self.is_recording = False
                 return False
+
+    def stop_stream_recording(self, stream_id: str) -> bool:
+        """Stop a specific stream recording"""
+        with self.lock:
+            if stream_id in self.recording_threads:
+                recorder = self.recording_threads.pop(stream_id)
+                recorder.stop()
+                logger.info(f"Stopped recording for stream {stream_id}")
+                
+                if not self.recording_threads:
+                    self.is_recording = False
+                
+                self._save_metadata()
+                return True
+            return False
     
     def stop_recording(self) -> bool:
         """Stop all recording threads gracefully"""

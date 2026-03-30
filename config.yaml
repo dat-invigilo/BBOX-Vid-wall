@@ -30,8 +30,8 @@ performance:
 # Save Mode - Video Recording
 save_mode:
   enabled: false
-  output_directory: '/app/shared_volume/recordings'
-  
+  output_directory: '/app/recordings'
+
   # Recording parameters
   fps: 30
   recording_width: 1920

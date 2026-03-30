@@ -694,101 +694,139 @@ def api_savemode_config():
         logger.info(f"api_savemode_config: Using dev_mode from config file: {dev_mode}")
     
     # Get streams based on dev_mode
+    available_streams = []
     if dev_mode:
-        streams = config.get('test_vids', [])
-        logger.debug(f"api_savemode_config: Returning {len(streams)} test videos")
+        test_vids = config.get('test_vids', [])
+        for i, url in enumerate(test_vids):
+            available_streams.append({
+                'id': i,
+                'name': f"Test Video {i+1}",
+                'source': url,
+                'type': 'source'
+            })
+        logger.debug(f"api_savemode_config: Returning {len(available_streams)} test videos")
     else:
         # Instead of just reading from config.yaml, use the parsed DeepStream URIs
         streams_info = parse_deepstream_uris()
         if streams_info:
-            # Use the source (camera) URIs for recording
-            streams = [info['source'] for info in streams_info]
-            logger.info(f"api_savemode_config: Returning {len(streams)} parsed DeepStream streams")
+            for i, info in enumerate(streams_info):
+                # Add Source stream
+                available_streams.append({
+                    'id': i,
+                    'name': f"Camera {i+1} (Source)",
+                    'url': info['source'],
+                    'type': 'source'
+                })
+                # Add BBOX stream if available
+                if 'bbox' in info and info['bbox']:
+                    available_streams.append({
+                        'id': i,
+                        'name': f"Camera {i+1} (BBOX)",
+                        'url': info['bbox'],
+                        'type': 'bbox'
+                    })
+            logger.info(f"api_savemode_config: Returning {len(available_streams)} parsed streams")
         else:
             streams = config.get('streams', [])
-            logger.debug(f"api_savemode_config: Returning {len(streams)} RTSP streams from config.yaml")
+            for i, url in enumerate(streams):
+                available_streams.append({
+                    'id': i,
+                    'name': f"Camera {i+1}",
+                    'url': url,
+                    'type': 'source'
+                })
+            logger.debug(f"api_savemode_config: Returning {len(available_streams)} RTSP streams from config.yaml")
     
     return jsonify({
         'dev_mode': dev_mode,
-        'available_streams': streams,
+        'available_streams': available_streams,
         'save_mode_config': config.get('save_mode', {})
     })
 
 
 @app.route('/api/save-mode/start', methods=['POST'])
 def api_savemode_start():
-    """Start recording selected streams"""
+    """Start recording selected streams (allows starting individual streams)"""
     global recorder
     
     try:
         data = request.get_json() or {}
-        selected_indices = data.get('stream_indices', [])
-        dev_mode = data.get('dev_mode', False)  # Get dev_mode from request
+        # selected_streams format: list of objects {id, url, type, name}
+        selected_streams = data.get('selected_streams', [])
+        dev_mode = data.get('dev_mode', False)
         
-        logger.info(f"api_savemode_start: dev_mode={dev_mode}, selected_indices={selected_indices}")
+        logger.info(f"api_savemode_start: dev_mode={dev_mode}, selected_count={len(selected_streams)}")
         
-        config = load_config()
-        
-        # Use dev_mode from request parameter (current UI state), not from config
-        if dev_mode:
-            streams = config.get('test_vids', [])
-            logger.info(f"api_savemode_start: Using {len(streams)} test videos")
-        else:
-            # Use get_streams_from_config to get the correct URIs (respecting BBOX toggles)
-            streams, _ = get_streams_from_config()
-            logger.info(f"api_savemode_start: Using {len(streams)} RTSP streams (BBOX-aware)")
-        
-        if not selected_indices:
+        if not selected_streams:
             return jsonify({'error': 'No streams selected'}), 400
         
-        # Build streams dict from selected indices
+        # Build streams dict for recorder: { "stream_id_type": url }
         streams_dict = {}
-        for idx in selected_indices:
-            if 0 <= idx < len(streams):
-                streams_dict[idx] = streams[idx]
-                logger.debug(f"api_savemode_start: Added stream {idx}: {streams[idx]}")
+        for item in selected_streams:
+            stream_id = item.get('id')
+            stream_type = item.get('type', 'source')
+            stream_url = item.get('url')
+            
+            if stream_id is not None and stream_url:
+                unique_key = f"{stream_id}_{stream_type}"
+                streams_dict[unique_key] = stream_url
+                logger.debug(f"api_savemode_start: Added {stream_type} stream {stream_id}: {stream_url}")
         
         if not streams_dict:
-            logger.error(f"api_savemode_start: No valid streams found for indices: {selected_indices}")
-            return jsonify({'error': 'Invalid stream indices'}), 400
+            return jsonify({'error': 'No valid streams provided'}), 400
         
-        # Get save mode config
+        config = load_config()
         save_config = config.get('save_mode', {})
-        output_dir = save_config.get('output_directory', './recordings')
-        chunk_minutes = save_config.get('chunk_duration_minutes', 60)
-        rotation_minutes = save_config.get('total_rotation_minutes', 1440)
-        fps = save_config.get('fps', 30)
-        width = save_config.get('recording_width', 1920)
-        height = save_config.get('recording_height', 1080)
         
-        logger.info(f"api_savemode_start: Starting recorder with {len(streams_dict)} streams")
+        # Initialize recorder if needed
+        if not recorder:
+            output_dir = save_config.get('output_directory', './recordings')
+            chunk_minutes = save_config.get('chunk_duration_minutes', 60)
+            rotation_minutes = save_config.get('total_rotation_minutes', 1440)
+            fps = save_config.get('fps', 30)
+            width = save_config.get('recording_width', 1920)
+            height = save_config.get('recording_height', 1080)
+            
+            recorder = VideoWallRecorder(
+                output_dir=output_dir,
+                chunk_duration_minutes=chunk_minutes,
+                total_rotation_minutes=rotation_minutes,
+                fps=fps,
+                width=width,
+                height=height
+            )
         
-        # Create and start recorder
-        recorder = VideoWallRecorder(
-            output_dir=output_dir,
-            chunk_duration_minutes=chunk_minutes,
-            total_rotation_minutes=rotation_minutes,
-            fps=fps,
-            width=width,
-            height=height
-        )
-        
-        success = recorder.start_recording(streams_dict)
+        success = recorder.start_recording_extended(streams_dict)
         
         if success:
-            logger.info(f"api_savemode_start: Recording started successfully")
+            logger.info(f"api_savemode_start: Recording update successful")
             return jsonify({
                 'status': 'recording',
-                'streams': list(streams_dict.keys()),
-                'chunk_duration_min': chunk_minutes,
-                'rotation_hours': rotation_minutes // 60
+                'streams': list(recorder.recording_threads.keys())
             })
         else:
-            logger.error("api_savemode_start: Failed to start recording")
-            return jsonify({'error': 'Failed to start recording'}), 500
+            return jsonify({'error': 'Failed to update recording'}), 500
             
     except Exception as e:
         logger.error(f"Error in api_savemode_start: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/save-mode/stop-stream', methods=['POST'])
+def api_savemode_stop_stream():
+    """Stop a specific stream recording"""
+    global recorder
+    try:
+        data = request.get_json() or {}
+        stream_key = data.get('stream_key') # e.g. "0_source" or "1_bbox"
+        
+        if not recorder or not stream_key:
+            return jsonify({'error': 'No active recorder or stream key'}), 400
+            
+        success = recorder.stop_stream_recording(stream_key)
+        return jsonify({'status': 'stopped' if success else 'not_found', 'key': stream_key})
+    except Exception as e:
+        logger.error(f"Error in api_savemode_stop_stream: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 
