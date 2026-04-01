@@ -31,6 +31,6 @@ COPY static/ ./static/
 ENV PYTHONUNBUFFERED=1
 ENV FLASK_ENV=production
 
-EXPOSE 5001
+EXPOSE 5002
 
 CMD ["python", "web_server.py"]
