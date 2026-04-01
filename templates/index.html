@@ -328,6 +328,15 @@
                                                     <label for="bbox_check_overlay_${i}">BBOX MODE</label>
                                                 </div>
                                                 <div class="dropdown-divider"></div>
+                                                <div class="dropdown-item">
+                                                    <input type="checkbox" id="record_bbox_check_${i}" onchange="onManualRecordToggle(${i}, 'bbox', this.checked)">
+                                                    <label for="record_bbox_check_${i}">RECORD (W/ BBOX)</label>
+                                                </div>
+                                                <div class="dropdown-item">
+                                                    <input type="checkbox" id="record_source_check_${i}" onchange="onManualRecordToggle(${i}, 'source', this.checked)">
+                                                    <label for="record_source_check_${i}">RECORD (W/O BBOX)</label>
+                                                </div>
+                                                <div class="dropdown-divider"></div>
                                                 <div class="dropdown-item clickable" onclick="toggleFullscreen(${i})">
                                                     <span class="icon">⛶</span>
                                                     <span>FULLSCREEN</span>
@@ -720,6 +729,8 @@
         }
 
         // Save Mode Recording Functions
+        let availableRecordingStreams = [];
+
         function loadSaveModeConfig() {
             // Pass current dev_mode state from UI to API so it returns the right streams
             const devMode = document.getElementById('devMode').checked;
@@ -732,7 +743,7 @@
                 .then(data => {
                     console.log('[loadSaveModeConfig] Received streams:', data.available_streams.length, 'dev_mode:', data.dev_mode);
                     const config = data.save_mode_config || {};
-                    const streams = data.available_streams || [];
+                    availableRecordingStreams = data.available_streams || [];
 
                     document.getElementById('chunkDurInfo').textContent = config.chunk_duration_minutes || 60;
                     document.getElementById('rotationInfo').textContent = Math.round((config.total_rotation_minutes || 1440) / 60);
@@ -740,28 +751,15 @@
                     // Build stream checkboxes
                     const container = document.getElementById('streamCheckboxes');
                     container.innerHTML = '';
-                    streams.forEach((stream, idx) => {
-                        // Better stream label: try to get a meaningful part of the URL
-                        let streamName = `Stream ${idx + 1}`;
-                        try {
-                            if (stream.includes('@')) {
-                                // RTSP with auth: get the part after the @
-                                streamName = stream.split('@')[1];
-                            } else {
-                                streamName = stream;
-                            }
-                            // Replace any long parts or take the end if it's too long
-                            if (streamName.length > 40) {
-                                streamName = '...' + streamName.substring(streamName.length - 37);
-                            }
-                        } catch (e) {
-                            streamName = `Stream ${idx + 1}`;
-                        }
-
+                    availableRecordingStreams.forEach((stream, idx) => {
+                        const isBbox = stream.type === 'bbox';
+                        const color = isBbox ? '#ff9800' : '#00ff41';
                         const html = `
-                            <div style="margin-bottom: 5px;">
-                                <input type="checkbox" id="streamCheck_${idx}" value="${idx}">
-                                <label for="streamCheck_${idx}" style="margin: 0; font-size: 11px;">${streamName}</label>
+                            <div style="margin-bottom: 5px; display: flex; align-items: center;">
+                                <input type="checkbox" id="streamCheck_${idx}" value="${idx}" style="margin-right: 8px;">
+                                <label for="streamCheck_${idx}" style="margin: 0; font-size: 11px; color: ${color}; cursor: pointer;">
+                                    ${stream.name}
+                                </label>
                             </div>
                         `;
                         container.insertAdjacentHTML('beforeend', html);
@@ -776,14 +774,44 @@
             fetch(`${API_BASE}/api/save-mode/status`)
                 .then(r => r.json())
                 .then(data => {
+                    // Update kebab menu checkboxes based on recording status
+                    if (data.streams) {
+                        for (let i = 0; i < 20; i++) { // Check up to 20 streams
+                            const sourceCheck = document.getElementById(`record_source_check_${i}`);
+                            const bboxCheck = document.getElementById(`record_bbox_check_${i}`);
+                            
+                            if (sourceCheck) sourceCheck.checked = !!data.streams[`${i}_source`];
+                            if (bboxCheck) bboxCheck.checked = !!data.streams[`${i}_bbox`];
+                        }
+                    }
+
                     if (data.recording) {
                         document.getElementById('recordStartBtn').disabled = true;
                         document.getElementById('recordStopBtn').disabled = false;
-                        document.getElementById('recordingStatusInfo').textContent = `Recording ${data.streams ? Object.keys(data.streams).length : 0} streams`;
+                        
+                        // Check if any streams are lost
+                        let disconnectedCount = 0;
+                        let totalStreams = 0;
+                        if (data.streams) {
+                            const entries = Object.entries(data.streams);
+                            totalStreams = entries.length;
+                            disconnectedCount = entries.filter(([_, s]) => s.is_recording && !s.is_connected).length;
+                        }
+
+                        if (disconnectedCount > 0) {
+                            const warningMsg = `⚠️ ${disconnectedCount}/${totalStreams} streams down - retrying...`;
+                            document.getElementById('recordingStatusInfo').textContent = warningMsg;
+                            document.getElementById('recordingStatusInfo').style.color = '#ff9800';
+                            addLog(`Recording interrupted: ${disconnectedCount} stream(s) lost. Retrying connection...`, 'warning');
+                        } else {
+                            document.getElementById('recordingStatusInfo').textContent = `Recording ${totalStreams} streams`;
+                            document.getElementById('recordingStatusInfo').style.color = '#00ff41';
+                        }
                     } else {
                         document.getElementById('recordStartBtn').disabled = false;
                         document.getElementById('recordStopBtn').disabled = true;
                         document.getElementById('recordingStatusInfo').textContent = 'Idle';
+                        document.getElementById('recordingStatusInfo').style.color = '';
                     }
 
                     if (data.disk_usage_gb !== undefined) {
@@ -822,6 +850,60 @@
             container.innerHTML = html;
         }
 
+        function onManualRecordToggle(index, type, checked) {
+            /** 
+             * Manually toggle recording for a specific stream/type from the kebab menu
+             * index: stream index
+             * type: 'source' or 'bbox'
+             */
+            console.log(`[onManualRecordToggle] ${index}_${type} -> ${checked}`);
+            
+            if (checked) {
+                // START recording
+                fetch(`${API_BASE}/api/streams?dev_mode=${document.getElementById('devMode').checked}`)
+                    .then(r => r.json())
+                    .then(data => {
+                        const streams_info = data.streams; // This is a list of URLs or objects
+                        
+                        // We need the ACTUAL URL for this stream index and type
+                        // We'll call /api/save-mode/config which returns the prepared list of options
+                        fetch(`${API_BASE}/api/save-mode/config?dev_mode=${document.getElementById('devMode').checked}`)
+                            .then(r => r.json())
+                            .then(configData => {
+                                const target = configData.available_streams.find(s => s.id === index && s.type === type);
+                                if (target) {
+                                    fetch(`${API_BASE}/api/save-mode/start`, {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ 
+                                            selected_streams: [target],
+                                            dev_mode: document.getElementById('devMode').checked 
+                                        })
+                                    })
+                                    .then(r => r.json())
+                                    .then(() => {
+                                        showMessage(`Recording started: ${target.name}`, 'success');
+                                        updateRecordingStatus();
+                                    });
+                                }
+                            });
+                    });
+            } else {
+                // STOP recording
+                const key = `${index}_${type}`;
+                fetch(`${API_BASE}/api/save-mode/stop-stream`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ stream_key: key })
+                })
+                .then(r => r.json())
+                .then(() => {
+                    showMessage(`Recording stopped: Stream ${index+1} (${type})`, 'info');
+                    updateRecordingStatus();
+                });
+            }
+        }
+
         function startRecording() {
             // Get selected streams
             const checkboxes = document.querySelectorAll('#streamCheckboxes input[type="checkbox"]:checked');
@@ -833,12 +915,14 @@
                 return;
             }
 
-            console.log('[startRecording] Starting with dev_mode:', devMode, 'streams:', selectedIndices);
+            const selected_streams = selectedIndices.map(idx => availableRecordingStreams[idx]);
+
+            console.log('[startRecording] Starting with dev_mode:', devMode, 'streams:', selected_streams.length);
 
             fetch(`${API_BASE}/api/save-mode/start`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ stream_indices: selectedIndices, dev_mode: devMode })
+                body: JSON.stringify({ selected_streams: selected_streams, dev_mode: devMode })
             })
             .then(r => r.json())
             .then(data => {
