@@ -135,41 +135,78 @@ def parse_deepstream_uris():
                 
                 if os.path.exists(config_file):
                     try:
-                        # Use ConfigParser but handle multiple source/sink sections
-                        # configparser doesn't support multiple identical keys, so we parse manually
-                        current_source_uri = None
+                        sources = {}  # source_id -> uri
+                        sinks = {}    # source_id -> rtsp_port (only for type 4)
+                        
+                        current_section = None
+                        current_source_id = None
+                        current_uri = None
+                        current_type = None
                         current_rtsp_port = None
+                        current_sink_source_id = None
+
+                        def flush_section():
+                            nonlocal current_section, current_source_id, current_uri, current_type, current_rtsp_port, current_sink_source_id
+                            if not current_section:
+                                return
+                                
+                            if current_section.startswith('source'):
+                                # Infer source ID from section name if not present (e.g. [source0])
+                                # But the config uses uri = ..., and we assume sequential or named.
+                                # Actually, user says sink source-id points to the source.
+                                # Let's track sources by their appearance order if ID is not in [source] section
+                                source_idx = len(sources)
+                                if current_uri:
+                                    sources[source_idx] = current_uri
+                                    
+                            elif current_section.startswith('sink'):
+                                if current_type == '4' and current_rtsp_port and current_sink_source_id is not None:
+                                    sinks[int(current_sink_source_id)] = current_rtsp_port
+                            
+                            # Reset for next section
+                            current_type = None
+                            current_rtsp_port = None
+                            current_sink_source_id = None
+                            current_uri = None
+
                         with open(config_file, 'r') as f:
                             for line in f:
                                 line = line.strip()
-                                # Clear comments
+                                if not line or line.startswith('#'):
+                                    continue
                                 if '#' in line:
                                     line = line.split('#')[0].strip()
                                 
-                                if line.startswith('uri = '):
-                                    # If we have a previous stream, save it (even without BBOX)
-                                    if current_source_uri:
-                                        stream_info = {'source': current_source_uri}
-                                        if current_rtsp_port:
-                                            stream_info['bbox'] = f'rtsp://localhost:{current_rtsp_port}/ds-test'
-                                        streams_info.append(stream_info)
-                                    
-                                    # Start new stream
-                                    current_source_uri = line.replace('uri = ', '').strip()
-                                    current_rtsp_port = None
-                                elif line.startswith('rtsp-port = '):
-                                    current_rtsp_port = line.replace('rtsp-port = ', '').strip()
+                                if line.startswith('[') and line.endswith(']'):
+                                    flush_section()
+                                    current_section = line[1:-1]
+                                    continue
+                                
+                                if '=' in line:
+                                    key, val = [part.strip() for part in line.split('=', 1)]
+                                    if key == 'uri':
+                                        current_uri = val
+                                    elif key == 'type':
+                                        current_type = val
+                                    elif key == 'rtsp-port':
+                                        current_rtsp_port = val
+                                    elif key == 'source-id':
+                                        current_sink_source_id = val
                         
-                        # Don't forget the last stream
-                        if current_source_uri:
-                            stream_info = {'source': current_source_uri}
-                            if current_rtsp_port:
-                                stream_info['bbox'] = f'rtsp://localhost:{current_rtsp_port}/ds-test'
+                        flush_section()
+                        
+                        # Map sources to their corresponding type-4 sinks
+                        for i in sorted(sources.keys()):
+                            stream_info = {'source': sources[i]}
+                            if i in sinks:
+                                stream_info['bbox'] = f'rtsp://localhost:{sinks[i]}/ds-test'
                             streams_info.append(stream_info)
+                            
                     except Exception as e:
                         logger.warning(f"Could not read config for GPU {gpu_id}: {str(e)}")
     except Exception as e:
-        logger.warning(f"Could not parse deepstream configs: {str(e)}")
+        logger.error(f"Could not parse deepstream configs: {str(e)}")
+        logger.error(traceback.format_exc())
     
     return streams_info
 
