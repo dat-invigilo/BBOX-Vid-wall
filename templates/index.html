@@ -178,10 +178,12 @@
         <div class="main-content">
             <div style="flex: 1; display: flex; flex-direction: column; overflow: hidden; position: relative;">
                 <div class="video-container" id="videoContainer">
-                    <img id="videoFeed" class="video-feed" src="/video_feed" alt="Video feed" style="display: none;">
-                    
-                    <!-- New Streams Overlay for Controls -->
-                    <div id="streamsOverlay" class="streams-overlay"></div>
+                    <div style="position: relative; line-height: 0;">
+                        <img id="videoFeed" class="video-feed" src="/video_feed" alt="Video feed" style="display: none;">
+                        
+                        <!-- New Streams Overlay for Controls -->
+                        <div id="streamsOverlay" class="streams-overlay"></div>
+                    </div>
 
                     <!-- Dedicated Fullscreen Overlay (Hidden by default) -->
                     <div id="fullscreenOverlay" class="fullscreen-video-overlay" style="display: none;">
@@ -303,50 +305,58 @@
                         const cols = data.cols || 2;
                         const rows = data.rows || 1;
 
-                        // Only recreate if count or dimensions change
-                        if (overlay.children.length !== streamsCount) {
-                            overlay.innerHTML = '';
-                            overlay.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
-                            overlay.style.aspectRatio = `${cols}/${rows}`;
+                    // Only recreate if count or dimensions change
+                    if (overlay.children.length !== streamsCount) {
+                        if (overlay.dataset.isFetching === "true") return;
+                        overlay.dataset.isFetching = "true";
 
-                            // Check current bbox_toggles from sync call
-                            fetch(`${API_BASE}/api/streams?dev_mode=${data.dev_mode}`)
-                                .then(r => r.json())
-                                .then(streamData => {
-                                    const bbox_toggles = streamData.bbox_toggles || {};
-                                    for (let i = 0; i < streamsCount; i++) {
-                                        const is_bbox = bbox_toggles[i] || (bbox_toggles[String(i)] || false);
-                                        const cell = document.createElement('div');
-                                        cell.className = 'stream-cell-controls';
-                                        cell.innerHTML = `
-                                            <div class="kebab-menu" onclick="toggleKebab(event, ${i})">
-                                                <span></span><span></span><span></span>
+                        // Check current bbox_toggles from sync call
+                        fetch(`${API_BASE}/api/streams?dev_mode=${data.dev_mode}`)
+                            .then(r => r.json())
+                            .then(streamData => {
+                                overlay.innerHTML = '';
+                                overlay.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+                                overlay.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+                                // Ensure exact height match for the overlay
+                                overlay.style.aspectRatio = `${cols}/${rows}`;
+
+                                const bbox_toggles = streamData.bbox_toggles || {};
+                                for (let i = 0; i < streamsCount; i++) {
+                                    const is_bbox = bbox_toggles[i] || (bbox_toggles[String(i)] || false);
+                                    const cell = document.createElement('div');
+                                    cell.className = 'stream-cell-controls';
+                                    cell.innerHTML = `
+                                        <div class="kebab-menu" onclick="toggleKebab(event, ${i})">
+                                            <span></span><span></span><span></span>
+                                        </div>
+                                        <div id="dropdown_${i}" class="dropdown-menu">
+                                            <div class="dropdown-item">
+                                                <input type="checkbox" id="bbox_check_overlay_${i}" ${is_bbox ? 'checked' : ''} onchange="onPerStreamBboxToggle(${i}, this.checked)">
+                                                <label for="bbox_check_overlay_${i}">BBOX MODE</label>
                                             </div>
-                                            <div id="dropdown_${i}" class="dropdown-menu">
-                                                <div class="dropdown-item">
-                                                    <input type="checkbox" id="bbox_check_overlay_${i}" ${is_bbox ? 'checked' : ''} onchange="onPerStreamBboxToggle(${i}, this.checked)">
-                                                    <label for="bbox_check_overlay_${i}">BBOX MODE</label>
-                                                </div>
-                                                <div class="dropdown-divider"></div>
-                                                <div class="dropdown-item">
-                                                    <input type="checkbox" id="record_bbox_check_${i}" onchange="onManualRecordToggle(${i}, 'bbox', this.checked)">
-                                                    <label for="record_bbox_check_${i}">RECORD (W/ BBOX)</label>
-                                                </div>
-                                                <div class="dropdown-item">
-                                                    <input type="checkbox" id="record_source_check_${i}" onchange="onManualRecordToggle(${i}, 'source', this.checked)">
-                                                    <label for="record_source_check_${i}">RECORD (W/O BBOX)</label>
-                                                </div>
-                                                <div class="dropdown-divider"></div>
-                                                <div class="dropdown-item clickable" onclick="toggleFullscreen(${i})">
-                                                    <span class="icon">⛶</span>
-                                                    <span>FULLSCREEN</span>
-                                                </div>
+                                            <div class="dropdown-divider"></div>
+                                            <div class="dropdown-item">
+                                                <input type="checkbox" id="record_bbox_check_${i}" onchange="onManualRecordToggle(${i}, 'bbox', this.checked)">
+                                                <label for="record_bbox_check_${i}">RECORD (W/ BBOX)</label>
                                             </div>
-                                        `;
-                                        overlay.appendChild(cell);
-                                    }
-                                });
-                        }
+                                            <div class="dropdown-item">
+                                                <input type="checkbox" id="record_source_check_${i}" onchange="onManualRecordToggle(${i}, 'source', this.checked)">
+                                                <label for="record_source_check_${i}">RECORD (W/O BBOX)</label>
+                                            </div>
+                                            <div class="dropdown-divider"></div>
+                                            <div class="dropdown-item clickable" onclick="toggleFullscreen(${i})">
+                                                <span class="icon">⛶</span>
+                                                <span>FULLSCREEN</span>
+                                            </div>
+                                        </div>
+                                    `;
+                                    overlay.appendChild(cell);
+                                }
+                            })
+                            .finally(() => {
+                                overlay.dataset.isFetching = "false";
+                            });
+                    }
                     } else {
                         statusDot.classList.remove('running');
                         statusText.textContent = 'Stopped';
