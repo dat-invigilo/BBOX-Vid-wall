@@ -6,7 +6,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: bbox-video-wall
-    image: anandakumar1996/bbox-vid-wall:v1.0
+    image: anandakumar1996/bbox-vid-wall:v1.2
     
     # Use host network to access external RTSP streams
     network_mode: host

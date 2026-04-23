@@ -38,8 +38,8 @@ save_mode:
   recording_height: 1080
   
   # Rotation policy (in minutes)
-  chunk_duration_minutes: 1    # Duration of each MP4 file (1 hour)
-  total_rotation_minutes: 2  # Total rotation cycle (24 hours = 1440 minutes)
+  chunk_duration_minutes: 30    # Duration of each MP4 file (1 hour)
+  total_rotation_minutes: 180  # Total rotation cycle (24 hours = 1440 minutes)
   
   # Cleanup/retention
   cleanup_incomplete: true

@@ -1,11 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>BBOX Video Wall</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
+
 <body>
     <div class="container">
         <!-- Sidebar -->
@@ -95,16 +97,19 @@
                 <div class="section">
                     <div class="section-title" id="streamsLabel">RTSP Streams</div>
                     <div class="button-group" style="margin-top: 0; margin-bottom: 10px;">
-                        <button class="btn-secondary btn-small" id="reparseBtn" onclick="reparseConfigs()" style="width: 100%;" title="Re-parse deepstream config files">⚙️ Re-parse Configs</button>
+                        <button class="btn-secondary btn-small" id="reparseBtn" onclick="reparseConfigs()"
+                            style="width: 100%;" title="Re-parse deepstream config files">⚙️ Re-parse Configs</button>
                     </div>
-                    
-                    <div id="streamListContainer" style="margin-top: 10px; max-height: 400px; min-height: 50px; overflow-y: auto; border: 1px solid #004d19; padding: 10px; background: rgba(0, 255, 65, 0.05); color: #00ff41;">
+
+                    <div id="streamListContainer"
+                        style="margin-top: 10px; max-height: 400px; min-height: 50px; overflow-y: auto; border: 1px solid #004d19; padding: 10px; background: rgba(0, 255, 65, 0.05); color: #00ff41;">
                         <!-- Streams with toggles will be injected here -->
                     </div>
-                    
+
                     <div class="form-group" style="margin-top: 10px;">
                         <label>Manual URIs (one per line):</label>
-                        <textarea id="streams" placeholder="rtsp://camera1/stream&#10;rtsp://camera2/stream" style="height: 80px;"></textarea>
+                        <textarea id="streams" placeholder="rtsp://camera1/stream&#10;rtsp://camera2/stream"
+                            style="height: 80px;"></textarea>
                     </div>
                 </div>
 
@@ -112,7 +117,8 @@
                 <div class="section" id="testVidsSection" style="display: none;">
                     <div class="section-title">Test Videos</div>
                     <div class="form-group">
-                        <textarea id="testVids" placeholder="./test_videos/sample1.mp4&#10;./test_videos/sample2.mp4"></textarea>
+                        <textarea id="testVids"
+                            placeholder="./test_videos/sample1.mp4&#10;./test_videos/sample2.mp4"></textarea>
                     </div>
                 </div>
 
@@ -122,12 +128,17 @@
                         <button class="btn-primary" id="startBtn" onclick="startWall()">Start</button>
                         <button class="btn-danger" id="stopBtn" onclick="stopWall()" disabled>Stop</button>
                     </div>
+                    <div class="button-group" style="margin-top: 6px;">
+                        <button class="btn-secondary" id="restartBtn" onclick="restartWall()" disabled
+                            style="width: 100%; background-color: #ff9800; color: white; font-weight: bold;">⟳
+                            Restart</button>
+                    </div>
                 </div>
 
                 <!-- Save Mode Recording -->
                 <div class="section">
                     <div class="section-title">Recording (Save Mode)</div>
-                    
+
                     <div class="form-group checkbox-group">
                         <input type="checkbox" id="saveModeEnable">
                         <label for="saveModeEnable" style="margin: 0;">Enable Recording</label>
@@ -136,12 +147,15 @@
                     <div id="saveModeControls" style="display: none;">
                         <!-- Stream Selection -->
                         <div style="margin-bottom: 10px;">
-                            <label style="font-weight: 500; font-size: 12px; color: #666;">Select Streams to Record:</label>
-                            <div id="streamCheckboxes" style="margin-top: 8px; max-height: 150px; overflow-y: auto;"></div>
+                            <label style="font-weight: 500; font-size: 12px; color: #666;">Select Streams to
+                                Record:</label>
+                            <div id="streamCheckboxes" style="margin-top: 8px; max-height: 150px; overflow-y: auto;">
+                            </div>
                         </div>
 
                         <!-- Recording Info -->
-                        <div id="recordingInfo" style="display: none; background: #f9f9f9; padding: 8px; border-radius: 5px; font-size: 11px; margin-bottom: 10px;">
+                        <div id="recordingInfo"
+                            style="display: none; background: #f9f9f9; padding: 8px; border-radius: 5px; font-size: 11px; margin-bottom: 10px;">
                             <div><strong>Chunk Duration:</strong> <span id="chunkDurInfo">60</span> min</div>
                             <div><strong>Rotation Cycle:</strong> <span id="rotationInfo">24</span> hours</div>
                             <div><strong>Status:</strong> <span id="recordingStatusInfo">Idle</span></div>
@@ -150,14 +164,17 @@
 
                         <!-- Recording Controls -->
                         <div class="button-group">
-                            <button class="btn-primary btn-small" id="recordStartBtn" onclick="startRecording()">Record</button>
-                            <button class="btn-danger btn-small" id="recordStopBtn" onclick="stopRecording()" disabled>Stop</button>
+                            <button class="btn-primary btn-small" id="recordStartBtn"
+                                onclick="startRecording()">Record</button>
+                            <button class="btn-danger btn-small" id="recordStopBtn" onclick="stopRecording()"
+                                disabled>Stop</button>
                         </div>
 
                         <!-- Recordings List -->
                         <div id="recordingsList" style="margin-top: 10px; font-size: 11px;">
                             <div style="font-weight: 500; margin-bottom: 5px;">📁 Recorded Files:</div>
-                            <div id="filesListContainer" style="max-height: 150px; overflow-y: auto; border: 1px solid #eee; border-radius: 5px; padding: 5px;">
+                            <div id="filesListContainer"
+                                style="max-height: 150px; overflow-y: auto; border: 1px solid #eee; border-radius: 5px; padding: 5px;">
                                 <div style="color: #999; text-align: center; padding: 10px;">No files yet</div>
                             </div>
                         </div>
@@ -179,8 +196,9 @@
             <div style="flex: 1; display: flex; flex-direction: column; overflow: hidden; position: relative;">
                 <div class="video-container" id="videoContainer">
                     <div style="position: relative; line-height: 0;">
-                        <img id="videoFeed" class="video-feed" src="/video_feed" alt="Video feed" style="display: none;">
-                        
+                        <img id="videoFeed" class="video-feed" src="/video_feed" alt="Video feed"
+                            style="display: none;">
+
                         <!-- New Streams Overlay for Controls -->
                         <div id="streamsOverlay" class="streams-overlay"></div>
                     </div>
@@ -188,7 +206,8 @@
                     <!-- Dedicated Fullscreen Overlay (Hidden by default) -->
                     <div id="fullscreenOverlay" class="fullscreen-video-overlay" style="display: none;">
                         <img id="fullscreenFeed" src="" alt="Fullscreen Feed">
-                        <div id="fullscreenControls" class="stream-cell-controls is-fullscreen" style="background: transparent !important; pointer-events: none;">
+                        <div id="fullscreenControls" class="stream-cell-controls is-fullscreen"
+                            style="background: transparent !important; pointer-events: none;">
                             <!-- The kebab menu will be cloned here in JS -->
                         </div>
                     </div>
@@ -199,8 +218,11 @@
                     </div>
                 </div>
                 <!-- Frontend Log Console -->
-                <div id="logConsoleContainer" style="position: fixed; bottom: 20px; left: 20px; z-index: 10000; pointer-events: none;">
-                    <button id="toggleLogBtn" onclick="toggleLogConsole()" style="position: absolute; bottom: 0; left: 0; width: 30px; height: 30px; padding: 0; pointer-events: auto; background: rgba(0, 10, 0, 0.8); border: 1px solid #00ff41; color: #00ff41; cursor: pointer; z-index: 10001;" title="Show Logs">📝</button>
+                <div id="logConsoleContainer"
+                    style="position: fixed; bottom: 20px; left: 20px; z-index: 10000; pointer-events: none;">
+                    <button id="toggleLogBtn" onclick="toggleLogConsole()"
+                        style="position: absolute; bottom: 0; left: 0; width: 30px; height: 30px; padding: 0; pointer-events: auto; background: rgba(0, 10, 0, 0.8); border: 1px solid #00ff41; color: #00ff41; cursor: pointer; z-index: 10001;"
+                        title="Show Logs">📝</button>
                     <div id="logConsole" class="log-console" style="display: none;"></div>
                 </div>
             </div>
@@ -210,6 +232,7 @@
     <script>
         const API_BASE = window.location.origin;
         let statusCheckInterval = null;
+        let heartbeatInterval = null;
 
         function toggleLogConsole() {
             const console = document.getElementById('logConsole');
@@ -234,7 +257,7 @@
             entry.className = `log-entry ${type}`;
             entry.innerHTML = `<span style="opacity: 0.6">[${time}]</span> ${msg}`;
             console.prepend(entry);
-            
+
             // Limit to 20 logs
             if (console.children.length > 20) {
                 console.lastElementChild.remove();
@@ -246,7 +269,7 @@
             const msgDiv = document.getElementById('messages');
             const html = `<div class="message ${type}">${msg}</div>`;
             msgDiv.insertAdjacentHTML('beforeend', html);
-            
+
             // Auto-remove after 5 seconds
             setTimeout(() => {
                 const elements = msgDiv.getElementsByClassName('message');
@@ -257,17 +280,17 @@
         // Kebab and Dropdown helper
         function toggleKebab(event, index) {
             event.stopPropagation();
-            
+
             // Find the dropdown relative to the clicked kebab menu (handles fullscreen cloning)
             const kebabMenu = event.currentTarget;
             const parent = kebabMenu.closest('.stream-cell-controls');
             const dropdown = parent.querySelector('.dropdown-menu');
-            
+
             if (!dropdown) {
                 console.error('Dropdown not found for index', index);
                 return;
             }
-            
+
             // Close all other dropdowns in the same container
             parent.querySelectorAll('.dropdown-menu').forEach(el => {
                 if (el !== dropdown) el.classList.remove('active');
@@ -298,6 +321,8 @@
                         document.getElementById('startBtn').disabled = true;
                         document.getElementById('stopBtn').disabled = false;
                         document.getElementById('stopBtn').textContent = 'Stop';
+                        document.getElementById('restartBtn').disabled = false;
+                        document.getElementById('restartBtn').textContent = '⟳ Restart';
 
                         // Logic for streams overlay (kebab menus)
                         const overlay = document.getElementById('streamsOverlay');
@@ -305,31 +330,38 @@
                         const cols = data.cols || 2;
                         const rows = data.rows || 1;
 
-                    // Only recreate if count or dimensions change
-                    if (overlay.children.length !== streamsCount) {
-                        if (overlay.dataset.isFetching === "true") return;
-                        overlay.dataset.isFetching = "true";
+                        // Only recreate if count or dimensions change
+                        if (overlay.children.length !== streamsCount) {
+                            if (overlay.dataset.isFetching === "true") return;
+                            overlay.dataset.isFetching = "true";
 
-                        // Check current bbox_toggles from sync call
-                        fetch(`${API_BASE}/api/streams?dev_mode=${data.dev_mode}`)
-                            .then(r => r.json())
-                            .then(streamData => {
-                                overlay.innerHTML = '';
-                                overlay.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
-                                overlay.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
-                                // Ensure exact height match for the overlay
-                                overlay.style.aspectRatio = `${cols}/${rows}`;
+                            // Check current bbox_toggles from sync call
+                            fetch(`${API_BASE}/api/streams?dev_mode=${data.dev_mode}`)
+                                .then(r => r.json())
+                                .then(streamData => {
+                                    overlay.innerHTML = '';
+                                    overlay.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+                                    overlay.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+                                    // Ensure exact height match for the overlay
+                                    overlay.style.aspectRatio = `${cols}/${rows}`;
 
-                                const bbox_toggles = streamData.bbox_toggles || {};
-                                for (let i = 0; i < streamsCount; i++) {
-                                    const is_bbox = bbox_toggles[i] || (bbox_toggles[String(i)] || false);
-                                    const cell = document.createElement('div');
-                                    cell.className = 'stream-cell-controls';
-                                    cell.innerHTML = `
+                                    const bbox_toggles = streamData.bbox_toggles || {};
+                                    for (let i = 0; i < streamsCount; i++) {
+                                        const is_bbox = bbox_toggles[i] || (bbox_toggles[String(i)] || false);
+                                        // Check if sidebar has a playing toggle for this stream
+                                        const sidebarPlaying = document.getElementById(`playing_check_${i}`);
+                                        const is_playing = sidebarPlaying ? sidebarPlaying.checked : true;
+                                        const cell = document.createElement('div');
+                                        cell.className = 'stream-cell-controls';
+                                        cell.innerHTML = `
                                         <div class="kebab-menu" onclick="toggleKebab(event, ${i})">
                                             <span></span><span></span><span></span>
                                         </div>
                                         <div id="dropdown_${i}" class="dropdown-menu">
+                                            <div class="dropdown-item">
+                                                <input type="checkbox" id="playing_check_overlay_${i}" ${is_playing ? 'checked' : ''} onchange="onPlayingOverlayToggle(${i}, this.checked)">
+                                                <label for="playing_check_overlay_${i}">PLAYING</label>
+                                            </div>
                                             <div class="dropdown-item">
                                                 <input type="checkbox" id="bbox_check_overlay_${i}" ${is_bbox ? 'checked' : ''} onchange="onPerStreamBboxToggle(${i}, this.checked)">
                                                 <label for="bbox_check_overlay_${i}">BBOX MODE</label>
@@ -350,13 +382,13 @@
                                             </div>
                                         </div>
                                     `;
-                                    overlay.appendChild(cell);
-                                }
-                            })
-                            .finally(() => {
-                                overlay.dataset.isFetching = "false";
-                            });
-                    }
+                                        overlay.appendChild(cell);
+                                    }
+                                })
+                                .finally(() => {
+                                    overlay.dataset.isFetching = "false";
+                                });
+                        }
                     } else {
                         statusDot.classList.remove('running');
                         statusText.textContent = 'Stopped';
@@ -365,7 +397,9 @@
                         document.getElementById('startBtn').disabled = false;
                         document.getElementById('stopBtn').disabled = true;
                         document.getElementById('stopBtn').textContent = 'Stop';
-                        
+                        document.getElementById('restartBtn').disabled = true;
+                        document.getElementById('restartBtn').textContent = '⟳ Restart';
+
                         // Clear overlay when stopped
                         document.getElementById('streamsOverlay').innerHTML = '';
                     }
@@ -381,27 +415,52 @@
                 .catch(e => console.error('Status check failed:', e));
         }
 
-        function startWall() {
-            let cols = parseInt(document.getElementById('cols').value);
-            let rows = parseInt(document.getElementById('rows').value);
-            const resolution = document.getElementById('resolution').value;
+        function getPlayingStreams() {
+            /**
+             * Get only the streams whose "Playing" checkbox is ticked.
+             * Falls back to all streams if no toggles exist yet.
+             */
             const devMode = document.getElementById('devMode').checked;
-            
-            let streams = [];
+            let allStreams = [];
             if (devMode) {
-                streams = document.getElementById('testVids').value
+                allStreams = document.getElementById('testVids').value
                     .split('\n')
                     .map(s => s.trim())
                     .filter(s => s);
             } else {
-                streams = document.getElementById('streams').value
+                allStreams = document.getElementById('streams').value
                     .split('\n')
                     .map(s => s.trim())
                     .filter(s => s);
             }
 
+            // Check if playing toggles exist in the UI
+            const toggles = document.querySelectorAll('.stream-playing-toggle');
+            if (toggles.length === 0) {
+                // No toggles rendered yet – use all streams
+                return allStreams;
+            }
+
+            // Filter: keep only streams whose Playing checkbox is checked
+            const filtered = [];
+            toggles.forEach((cb, idx) => {
+                if (cb.checked && idx < allStreams.length) {
+                    filtered.push(allStreams[idx]);
+                }
+            });
+            return filtered;
+        }
+
+        function startWall() {
+            let cols = parseInt(document.getElementById('cols').value);
+            let rows = parseInt(document.getElementById('rows').value);
+            const resolution = document.getElementById('resolution').value;
+            const devMode = document.getElementById('devMode').checked;
+
+            let streams = getPlayingStreams();
+
             if (!streams.length) {
-                showMessage('Please enter at least one stream', 'error');
+                showMessage('No streams selected for playing. Tick at least one "Playing" checkbox.', 'error');
                 return;
             }
 
@@ -416,13 +475,13 @@
             }
 
             const [width, height] = resolution.split('x').map(Number);
-            
+
             // Show loading message and update placeholder
             showMessage('Loading streams...', 'info');
             const placeholder = document.getElementById('placeholder');
             placeholder.innerHTML = '<div class="placeholder-icon">⏳</div><div>Connecting to streams...</div>';
             placeholder.style.display = 'block';
-            
+
             console.log('[startWall] Calling /api/start with:', { streams: streams.length, cols, rows, width, height });
 
             fetch(`${API_BASE}/api/start`, {
@@ -430,55 +489,57 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ streams, cols, rows, width, height })
             })
-            .then(r => {
-                console.log('[startWall] API response status:', r.status);
-                return r.json();
-            })
-            .then(data => {
-                console.log('[startWall] API response data:', data);
-                if (data.status === 'started') {
-                    showMessage('Video wall started!', 'success');
-                    
-                    // Immediately show video feed without waiting for status check
-                    console.log('[startWall] Showing video feed immediately');
-                    const videoFeed = document.getElementById('videoFeed');
-                    const statusDot = document.getElementById('statusDot');
-                    const statusText = document.getElementById('statusText');
-                    
-                    placeholder.style.display = 'none';
-                    // Force refresh of the video feed image with a cache-busting timestamp
-                    videoFeed.src = `${API_BASE}/video_feed?t=${new Date().getTime()}`;
-                    videoFeed.style.display = 'block';
-                    statusDot.classList.add('running');
-                    statusText.textContent = 'Running';
-                    document.getElementById('startBtn').disabled = true;
-                    document.getElementById('stopBtn').disabled = false;
-                    
-                    // Also call updateStatus to get complete info
-                    updateStatus();
-                } else {
-                    console.error('[startWall] Start failed:', data.error);
-                    showMessage(data.error || 'Failed to start', 'error');
-                }
-            })
-            .catch(e => {
-                console.error('[startWall] Error:', e);
-                showMessage(`Error: ${e.message}`, 'error');
-            });
+                .then(r => {
+                    console.log('[startWall] API response status:', r.status);
+                    return r.json();
+                })
+                .then(data => {
+                    console.log('[startWall] API response data:', data);
+                    if (data.status === 'started') {
+                        showMessage('Video wall started!', 'success');
+
+                        // Immediately show video feed without waiting for status check
+                        console.log('[startWall] Showing video feed immediately');
+                        const videoFeed = document.getElementById('videoFeed');
+                        const statusDot = document.getElementById('statusDot');
+                        const statusText = document.getElementById('statusText');
+
+                        placeholder.style.display = 'none';
+                        // Force refresh of the video feed image with a cache-busting timestamp
+                        videoFeed.src = `${API_BASE}/video_feed?t=${new Date().getTime()}`;
+                        videoFeed.style.display = 'block';
+                        statusDot.classList.add('running');
+                        statusText.textContent = 'Running';
+                        document.getElementById('startBtn').disabled = true;
+                        document.getElementById('stopBtn').disabled = false;
+                        document.getElementById('restartBtn').disabled = false;
+
+                        // Also call updateStatus to get complete info
+                        updateStatus();
+                    } else {
+                        console.error('[startWall] Start failed:', data.error);
+                        showMessage(data.error || 'Failed to start', 'error');
+                    }
+                })
+                .catch(e => {
+                    console.error('[startWall] Error:', e);
+                    showMessage(`Error: ${e.message}`, 'error');
+                });
         }
 
         function stopWall() {
             const stopBtn = document.getElementById('stopBtn');
             const videoFeed = document.getElementById('videoFeed');
             const placeholder = document.getElementById('placeholder');
-            
+
             stopBtn.disabled = true;
             stopBtn.textContent = 'Stopping...';
-            
+            document.getElementById('restartBtn').disabled = true;
+
             // Immediately clear video feed source to break the browser connection
             videoFeed.style.display = 'none';
             videoFeed.src = '';
-            
+
             fetch(`${API_BASE}/api/stop`, { method: 'POST' })
                 .then(r => r.json())
                 .then(() => {
@@ -493,6 +554,48 @@
                 });
         }
 
+        function restartWall() {
+            /**
+             * Restart the wall with only the streams whose "Playing" box is ticked.
+             * Stops the current wall first, waits for it to fully stop, then starts again.
+             */
+            const restartBtn = document.getElementById('restartBtn');
+            const videoFeed = document.getElementById('videoFeed');
+            const placeholder = document.getElementById('placeholder');
+
+            restartBtn.disabled = true;
+            restartBtn.textContent = '⟳ Restarting...';
+            document.getElementById('stopBtn').disabled = true;
+
+            // Immediately clear video feed
+            videoFeed.style.display = 'none';
+            videoFeed.src = '';
+
+            showMessage('Restarting wall with selected streams...', 'info');
+
+            fetch(`${API_BASE}/api/stop`, { method: 'POST' })
+                .then(r => r.json())
+                .then(() => {
+                    addLog('Wall stopped. Starting with playing streams...', 'info');
+                    placeholder.innerHTML = '<div class="placeholder-icon">⏳</div><div>Restarting with selected streams...</div>';
+                    placeholder.style.display = 'block';
+
+                    // Small delay to let backend fully release resources
+                    return new Promise(resolve => setTimeout(resolve, 1500));
+                })
+                .then(() => {
+                    // Now start with only the playing streams
+                    startWall();
+                    restartBtn.textContent = '⟳ Restart';
+                    // restartBtn will be re-enabled once startWall succeeds (via updateStatus)
+                })
+                .catch(e => {
+                    showMessage(`Restart error: ${e.message}`, 'error');
+                    restartBtn.textContent = '⟳ Restart';
+                    restartBtn.disabled = false;
+                });
+        }
+
         function reloadStreams() {
             /**
              * Reload streams without stopping current display
@@ -500,44 +603,47 @@
              */
             const devMode = document.getElementById('devMode').checked;
             console.log('[reloadStreams] Fetching streams: devMode=', devMode);
-            
+
             fetch(`${API_BASE}/api/streams?dev_mode=${devMode}`)
                 .then(r => r.json())
                 .then(data => {
                     console.log('[reloadStreams] Got streams:', data);
-                    
+
                     // Update the list container with toggles
                     const container = document.getElementById('streamListContainer');
                     if (container) {
                         container.innerHTML = '';
-                        
+
                         const streams = data.streams || [];
                         const bbox_toggles = data.bbox_toggles || {};
-                        
+                        const source_ids = data.source_ids || [];
+
                         streams.forEach((stream, idx) => {
                             const is_bbox = bbox_toggles[idx] || false;
-                            
+                            // Use source_id from deepstream if available, otherwise fall back to index
+                            const sourceId = source_ids[idx] || String(idx);
+
                             // Shorten stream name for display
                             let streamName = stream;
                             try {
                                 const url = new URL(stream);
                                 streamName = url.pathname.split('/').pop() || url.hostname;
-                            } catch(e) {}
-                            
+                            } catch (e) { }
+
                             const html = `
                                 <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; border-bottom: 1px solid rgba(0,255,65,0.1); padding-bottom: 5px;">
                                     <div style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px;" title="${stream}">
-                                        ${idx + 1}. ${streamName}
+                                        ${idx + 1}. <span style="color: #ff9800; font-weight: bold;">CameraID: ${sourceId}</span>
                                     </div>
                                     <div class="checkbox-group" style="margin-left: 10px;">
-                                        <input type="checkbox" id="bbox_check_${idx}" class="stream-bbox-toggle" ${is_bbox ? 'checked' : ''} onchange="onPerStreamBboxToggle(${idx}, this.checked)">
-                                        <label for="bbox_check_${idx}" style="font-size: 10px; color: #00ff41; margin-bottom: 0;">BBOX</label>
+                                        <input type="checkbox" id="playing_check_${idx}" class="stream-playing-toggle" checked onchange="onPlayingToggleChanged(${idx})">
+                                        <label for="playing_check_${idx}" style="font-size: 10px; color: #00ff41; margin-bottom: 0;">Playing</label>
                                     </div>
                                 </div>
                             `;
                             container.insertAdjacentHTML('beforeend', html);
                         });
-                        
+
                         if (streams.length === 0) {
                             container.innerHTML = '<div style="color: #999; text-align: center; padding: 10px;">No streams found</div>';
                         }
@@ -545,11 +651,11 @@
 
                     // Also update the raw text area
                     document.getElementById('streams').value = (data.streams || []).join('\n');
-                    
-                    // Update global bbox checkbox state (true if ALL are checked)
-                    const toggles = document.querySelectorAll('.stream-bbox-toggle');
-                    if (toggles.length > 0) {
-                        const allChecked = Array.from(toggles).every(t => t.checked);
+
+                    // Update global bbox checkbox state (true if ALL overlay BBOX toggles are checked)
+                    const bboxOverlayToggles = document.querySelectorAll('[id^="bbox_check_overlay_"]');
+                    if (bboxOverlayToggles.length > 0) {
+                        const allChecked = Array.from(bboxOverlayToggles).every(t => t.checked);
                         document.getElementById('bboxMode').checked = allChecked;
                     }
 
@@ -570,9 +676,9 @@
             const originalText = btn.textContent;
             btn.textContent = '⚙️ Parsing...';
             btn.disabled = true;
-            
+
             addLog('Requesting deepstream config re-parse...', 'info');
-            
+
             fetch(`${API_BASE}/api/reparse-configs`, { method: 'POST' })
                 .then(r => r.json())
                 .then(data => {
@@ -597,24 +703,20 @@
 
         function onPerStreamBboxToggle(index, checked) {
             console.log(`[onPerStreamBboxToggle] Stream ${index} -> ${checked}`);
-            
-            // Sync with sidebar toggle if it exists
-            const sidebarBtn = document.getElementById(`bbox_check_${index}`);
-            if (sidebarBtn) sidebarBtn.checked = checked;
-            
+
             // Sync with overlay toggle if it exists
             const overlayBtn = document.getElementById(`bbox_check_overlay_${index}`);
             if (overlayBtn) overlayBtn.checked = checked;
 
-            // Collect all current toggles
+            // Collect all current toggles from overlay checkboxes
             const bbox_toggles = {};
-            document.querySelectorAll('.stream-bbox-toggle, [id^="bbox_check_overlay_"]').forEach(checkbox => {
-                const idx = checkbox.id.replace('bbox_check_', '').replace('bbox_check_overlay_', '');
+            document.querySelectorAll('[id^="bbox_check_overlay_"]').forEach(checkbox => {
+                const idx = checkbox.id.replace('bbox_check_overlay_', '');
                 bbox_toggles[idx] = checkbox.checked;
             });
 
             // Update global checkbox
-            const allToggles = document.querySelectorAll('.stream-bbox-toggle, [id^="bbox_check_overlay_"]');
+            const allToggles = document.querySelectorAll('[id^="bbox_check_overlay_"]');
             if (allToggles.length > 0) {
                 const allChecked = Array.from(allToggles).every(t => t.checked);
                 document.getElementById('bboxMode').checked = allChecked;
@@ -622,15 +724,46 @@
 
             // Save configuration
             saveConfig(bbox_toggles);
-            
-            showMessage(`Stream ${index+1} BBOX updated`, 'info');
+
+            showMessage(`Stream ${index + 1} BBOX updated`, 'info');
+        }
+
+        function onPlayingToggleChanged(index) {
+            /**
+             * Called when any "Playing" checkbox is toggled in the sidebar stream list.
+             * Syncs with the overlay kebab PLAYING toggle if present.
+             */
+            if (index !== undefined) {
+                const sidebarCb = document.getElementById(`playing_check_${index}`);
+                const overlayCb = document.getElementById(`playing_check_overlay_${index}`);
+                if (sidebarCb && overlayCb) {
+                    overlayCb.checked = sidebarCb.checked;
+                }
+            }
+            const toggles = document.querySelectorAll('.stream-playing-toggle');
+            const playingCount = Array.from(toggles).filter(t => t.checked).length;
+            addLog(`Playing: ${playingCount}/${toggles.length} streams selected`, 'info');
+        }
+
+        function onPlayingOverlayToggle(index, checked) {
+            /**
+             * Called when the PLAYING checkbox in the kebab overlay menu is toggled.
+             * Syncs with the sidebar Playing toggle.
+             */
+            const sidebarCb = document.getElementById(`playing_check_${index}`);
+            if (sidebarCb) {
+                sidebarCb.checked = checked;
+            }
+            const toggles = document.querySelectorAll('.stream-playing-toggle');
+            const playingCount = Array.from(toggles).filter(t => t.checked).length;
+            addLog(`Playing: ${playingCount}/${toggles.length} streams selected`, 'info');
         }
 
         function toggleFullscreen(index) {
             const overlay = document.getElementById('fullscreenOverlay');
             const fsFeed = document.getElementById('fullscreenFeed');
             const fsControls = document.getElementById('fullscreenControls');
-            
+
             const isClosing = overlay.style.display !== 'none';
 
             if (isClosing) {
@@ -640,18 +773,18 @@
                 fsControls.innerHTML = "";
             } else {
                 addLog(`Opening Isolated Stream ${index + 1}...`, 'info');
-                
+
                 // Show the overlay
                 overlay.style.display = 'flex';
-                
+
                 // Set the specific stream source
                 // Backend endpoint /stream/<index> provides individual MJPEG
                 fsFeed.src = `/stream/${index}`;
-                
+
                 // Clone the specific kebab menu so controls still work in fullscreen
                 const originalMenu = document.querySelector(`#streamsOverlay .stream-cell-controls:nth-child(${index + 1})`).innerHTML;
                 fsControls.innerHTML = originalMenu;
-                
+
                 // Update the icon/instruction in the cloned menu if needed
                 const items = fsControls.querySelectorAll('.dropdown-item');
                 items.forEach(item => {
@@ -667,12 +800,12 @@
         function toggleAllBbox(checked) {
             console.log(`[toggleAllBbox] Setting all to ${checked}`);
             const bbox_toggles = {};
-            document.querySelectorAll('.stream-bbox-toggle').forEach(checkbox => {
+            document.querySelectorAll('[id^="bbox_check_overlay_"]').forEach(checkbox => {
                 checkbox.checked = checked;
-                const idx = checkbox.id.replace('bbox_check_', '');
+                const idx = checkbox.id.replace('bbox_check_overlay_', '');
                 bbox_toggles[idx] = checked;
             });
-            
+
             saveConfig(bbox_toggles);
             showMessage(`All streams BBOX Mode: ${checked ? 'ON' : 'OFF'}. Restart wall to apply.`, 'info');
         }
@@ -687,12 +820,12 @@
                     document.getElementById('devMode').checked = config.dev_mode || false;
                     document.getElementById('streams').value = (config.streams || []).join('\n');
                     document.getElementById('testVids').value = (config.test_vids || []).join('\n');
-                    
+
                     updateDevModeUI();
-                    
+
                     // We call reloadStreams to populate the per-stream toggle list
                     reloadStreams();
-                    
+
                     showMessage('Configuration loaded', 'success');
                 })
                 .catch(e => showMessage(`Error loading config: ${e.message}`, 'error'));
@@ -700,12 +833,12 @@
 
         function saveConfig(bbox_toggles = null) {
             const resolution = document.getElementById('resolution').value;
-            
-            // If not provided, collect from UI
+
+            // If not provided, collect from overlay BBOX checkboxes
             if (bbox_toggles === null) {
                 bbox_toggles = {};
-                document.querySelectorAll('.stream-bbox-toggle').forEach(checkbox => {
-                    const idx = checkbox.id.replace('bbox_check_', '');
+                document.querySelectorAll('[id^="bbox_check_overlay_"]').forEach(checkbox => {
+                    const idx = checkbox.id.replace('bbox_check_overlay_', '');
                     bbox_toggles[idx] = checkbox.checked;
                 });
             }
@@ -726,9 +859,9 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(config)
             })
-            .then(r => r.json())
-            .then(() => showMessage('Configuration saved', 'success'))
-            .catch(e => showMessage(`Error saving config: ${e.message}`, 'error'));
+                .then(r => r.json())
+                .then(() => showMessage('Configuration saved', 'success'))
+                .catch(e => showMessage(`Error saving config: ${e.message}`, 'error'));
         }
 
         function updateDevModeUI() {
@@ -745,9 +878,9 @@
             // Pass current dev_mode state from UI to API so it returns the right streams
             const devMode = document.getElementById('devMode').checked;
             const apiUrl = `${API_BASE}/api/save-mode/config?dev_mode=${devMode}`;
-            
+
             console.log('[loadSaveModeConfig] Fetching with dev_mode:', devMode);
-            
+
             fetch(apiUrl)
                 .then(r => r.json())
                 .then(data => {
@@ -789,7 +922,7 @@
                         for (let i = 0; i < 20; i++) { // Check up to 20 streams
                             const sourceCheck = document.getElementById(`record_source_check_${i}`);
                             const bboxCheck = document.getElementById(`record_bbox_check_${i}`);
-                            
+
                             if (sourceCheck) sourceCheck.checked = !!data.streams[`${i}_source`];
                             if (bboxCheck) bboxCheck.checked = !!data.streams[`${i}_bbox`];
                         }
@@ -798,7 +931,7 @@
                     if (data.recording) {
                         document.getElementById('recordStartBtn').disabled = true;
                         document.getElementById('recordStopBtn').disabled = false;
-                        
+
                         // Check if any streams are lost
                         let disconnectedCount = 0;
                         let totalStreams = 0;
@@ -867,14 +1000,14 @@
              * type: 'source' or 'bbox'
              */
             console.log(`[onManualRecordToggle] ${index}_${type} -> ${checked}`);
-            
+
             if (checked) {
                 // START recording
                 fetch(`${API_BASE}/api/streams?dev_mode=${document.getElementById('devMode').checked}`)
                     .then(r => r.json())
                     .then(data => {
                         const streams_info = data.streams; // This is a list of URLs or objects
-                        
+
                         // We need the ACTUAL URL for this stream index and type
                         // We'll call /api/save-mode/config which returns the prepared list of options
                         fetch(`${API_BASE}/api/save-mode/config?dev_mode=${document.getElementById('devMode').checked}`)
@@ -885,16 +1018,16 @@
                                     fetch(`${API_BASE}/api/save-mode/start`, {
                                         method: 'POST',
                                         headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({ 
+                                        body: JSON.stringify({
                                             selected_streams: [target],
-                                            dev_mode: document.getElementById('devMode').checked 
+                                            dev_mode: document.getElementById('devMode').checked
                                         })
                                     })
-                                    .then(r => r.json())
-                                    .then(() => {
-                                        showMessage(`Recording started: ${target.name}`, 'success');
-                                        updateRecordingStatus();
-                                    });
+                                        .then(r => r.json())
+                                        .then(() => {
+                                            showMessage(`Recording started: ${target.name}`, 'success');
+                                            updateRecordingStatus();
+                                        });
                                 }
                             });
                     });
@@ -906,11 +1039,11 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ stream_key: key })
                 })
-                .then(r => r.json())
-                .then(() => {
-                    showMessage(`Recording stopped: Stream ${index+1} (${type})`, 'info');
-                    updateRecordingStatus();
-                });
+                    .then(r => r.json())
+                    .then(() => {
+                        showMessage(`Recording stopped: Stream ${index + 1} (${type})`, 'info');
+                        updateRecordingStatus();
+                    });
             }
         }
 
@@ -934,16 +1067,16 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ selected_streams: selected_streams, dev_mode: devMode })
             })
-            .then(r => r.json())
-            .then(data => {
-                if (data.status === 'recording') {
-                    showMessage(`Recording started for ${data.streams.length} stream(s)`, 'success');
-                    updateRecordingStatus();
-                } else {
-                    showMessage(data.error || 'Failed to start recording', 'error');
-                }
-            })
-            .catch(e => showMessage(`Error: ${e.message}`, 'error'));
+                .then(r => r.json())
+                .then(data => {
+                    if (data.status === 'recording') {
+                        showMessage(`Recording started for ${data.streams.length} stream(s)`, 'success');
+                        updateRecordingStatus();
+                    } else {
+                        showMessage(data.error || 'Failed to start recording', 'error');
+                    }
+                })
+                .catch(e => showMessage(`Error: ${e.message}`, 'error'));
         }
 
         function stopRecording() {
@@ -957,7 +1090,7 @@
         }
 
         // Toggle Save Mode section
-        document.getElementById('saveModeEnable').addEventListener('change', function() {
+        document.getElementById('saveModeEnable').addEventListener('change', function () {
             document.getElementById('saveModeControls').style.display = this.checked ? 'block' : 'none';
             if (this.checked) {
                 loadSaveModeConfig();
@@ -969,22 +1102,27 @@
             document.getElementById('streams').style.display = devMode ? 'none' : 'block';
             document.getElementById('testVidsSection').style.display = devMode ? 'block' : 'none';
             document.getElementById('streamsLabel').textContent = devMode ? 'Test Videos' : 'RTSP Streams';
-            
+
             // Reload recording streams when dev mode changes
             console.log('[updateDevModeUI] Dev mode changed, reloading save mode config. Dev mode:', devMode);
             loadSaveModeConfig();
         }
 
         // Event listeners
-        document.getElementById('devMode').addEventListener('change', function() {
+        document.getElementById('devMode').addEventListener('change', function () {
             updateDevModeUI();
             reloadStreams();
         });
-        
-        document.getElementById('bboxMode').addEventListener('change', function() {
+
+        document.getElementById('bboxMode').addEventListener('change', function () {
             console.log('[bboxMode change] BBOX_ON toggled to:', this.checked);
             toggleAllBbox(this.checked);
         });
+
+        // Heartbeat — keeps the backend watchdog from auto-stopping the wall
+        function sendHeartbeat() {
+            fetch(`${API_BASE}/api/heartbeat`, { method: 'POST' }).catch(() => { });
+        }
 
         // Initialize
         window.addEventListener('load', () => {
@@ -998,21 +1136,27 @@
                     document.getElementById('devMode').checked = config.dev_mode || false;
                     document.getElementById('testVids').value = (config.test_vids || []).join('\n');
                     updateDevModeUI();
-                    
+
                     // After loading config, we have the initial toggles, but reloadStreams will fetch them again
                     setTimeout(reloadStreams, 300);
                 })
                 .catch(e => console.error('Error loading config:', e));
-            
+
             // Status checks
             updateStatus();
             // Reduced frequency to 5 seconds to reduce backend log volume
             statusCheckInterval = setInterval(updateStatus, 5000);
+
+            // Heartbeat: ping backend every 10s so it knows we're still here
+            sendHeartbeat();
+            heartbeatInterval = setInterval(sendHeartbeat, 10000);
         });
 
         window.addEventListener('unload', () => {
             if (statusCheckInterval) clearInterval(statusCheckInterval);
+            if (heartbeatInterval) clearInterval(heartbeatInterval);
         });
     </script>
 </body>
+
 </html>

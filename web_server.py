@@ -30,6 +30,11 @@ config_file = 'config.yaml'
 bbox_on_mode = False  # Global toggle for BBOX_ON mode
 session_bbox_toggles = {} # In-memory storage for per-stream toggles
 
+# Heartbeat / inactivity watchdog
+HEARTBEAT_TIMEOUT_SECONDS = 1800  # Stop wall if no heartbeat for this long
+last_heartbeat_time = 0.0  # epoch timestamp of last frontend heartbeat
+watchdog_thread = None
+
 
 def check_shared_volume():
     """Check and log shared volume contents"""
@@ -151,13 +156,11 @@ def parse_deepstream_uris():
                                 return
                                 
                             if current_section.startswith('source'):
-                                # Infer source ID from section name if not present (e.g. [source0])
-                                # But the config uses uri = ..., and we assume sequential or named.
-                                # Actually, user says sink source-id points to the source.
-                                # Let's track sources by their appearance order if ID is not in [source] section
+                                # Extract numeric ID from section name, e.g. [source223] -> 223
+                                section_num = current_section.replace('source', '', 1)
                                 source_idx = len(sources)
                                 if current_uri:
-                                    sources[source_idx] = current_uri
+                                    sources[source_idx] = {'uri': current_uri, 'section_id': section_num}
                                     
                             elif current_section.startswith('sink'):
                                 if current_type == '4' and current_rtsp_port and current_sink_source_id is not None:
@@ -197,7 +200,11 @@ def parse_deepstream_uris():
                         
                         # Map sources to their corresponding type-4 sinks
                         for i in sorted(sources.keys()):
-                            stream_info = {'source': sources[i]}
+                            src = sources[i]
+                            stream_info = {
+                                'source': src['uri'],
+                                'source_id': src['section_id'],
+                            }
                             if i in sinks:
                                 stream_info['bbox'] = f'rtsp://localhost:{sinks[i]}/ds-test'
                             streams_info.append(stream_info)
@@ -592,6 +599,14 @@ def api_stop():
     return jsonify({'status': 'stopped'})
 
 
+@app.route('/api/heartbeat', methods=['POST'])
+def api_heartbeat():
+    """Frontend heartbeat — keeps the wall alive while a browser tab is open"""
+    global last_heartbeat_time
+    last_heartbeat_time = time.time()
+    return jsonify({'status': 'ok'})
+
+
 @app.route('/api/config', methods=['GET'])
 def api_get_config():
     """Get current configuration"""
@@ -661,10 +676,17 @@ def api_get_streams():
         # This function handles the per-stream toggle logic based on the loaded config
         streams, dev_mode = get_streams_from_config()
         
+        # Also get source IDs from deepstream parsing
+        source_ids = []
+        if not dev_mode:
+            streams_info = parse_deepstream_uris()
+            source_ids = [info.get('source_id', str(i)) for i, info in enumerate(streams_info)]
+        
         return jsonify({
             'streams': streams,
             'dev_mode': dev_mode,
-            'bbox_toggles': session_bbox_toggles
+            'bbox_toggles': session_bbox_toggles,
+            'source_ids': source_ids
         })
     except Exception as e:
         logger.error(f"Error getting streams: {str(e)}")
@@ -957,6 +979,39 @@ def api_savemode_download():
         return jsonify({'error': str(e)}), 500
 
 
+def _inactivity_watchdog():
+    """Background thread that auto-stops the wall if the frontend goes away.
+    
+    Runs every 15 seconds.  If the wall is running and no heartbeat has been
+    received for HEARTBEAT_TIMEOUT_SECONDS, it stops both the video wall and
+    any active recording to free resources.
+    """
+    global last_heartbeat_time, recorder
+    logger.info(f"Inactivity watchdog started (timeout={HEARTBEAT_TIMEOUT_SECONDS}s)")
+    while True:
+        time.sleep(15)
+        if not streamer.is_running:
+            continue
+        if last_heartbeat_time == 0:
+            # No heartbeat ever received — wall was started before the first
+            # heartbeat arrived; give it a grace period.
+            continue
+        elapsed = time.time() - last_heartbeat_time
+        if elapsed > HEARTBEAT_TIMEOUT_SECONDS:
+            logger.warning(
+                f"No frontend heartbeat for {elapsed:.0f}s — auto-stopping video wall to save resources"
+            )
+            streamer.stop()
+            # Also stop recordings if any
+            if recorder and recorder.is_recording:
+                try:
+                    recorder.stop_recording()
+                    logger.info("Auto-stopped active recording due to inactivity")
+                except Exception as e:
+                    logger.error(f"Error auto-stopping recorder: {e}")
+            last_heartbeat_time = 0.0
+
+
 if __name__ == '__main__':
     logger.info("=" * 60)
     logger.info("Video Wall Web Server Starting")
@@ -964,6 +1019,10 @@ if __name__ == '__main__':
     
     # Check shared volume
     file_count = check_shared_volume()
+    
+    # Start inactivity watchdog
+    watchdog_thread = threading.Thread(target=_inactivity_watchdog, daemon=True)
+    watchdog_thread.start()
     
     logger.info("=" * 60)
     app.run(host='0.0.0.0', port=5002, debug=False, threaded=True)
