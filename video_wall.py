@@ -61,9 +61,9 @@ class VideoWallDisplay:
             if info.get('bbox'):
                 path_bbox = self.path_name(source_id, 'bbox')
                 self._ensure_path(path_bbox, {
-                    'source': info['bbox'],
-                    'sourceOnDemand': True,
-                    'sourceOnDemandCloseAfter': '30s',
+                    'runOnDemand': self._bbox_remux_cmd(info['bbox']),
+                    'runOnDemandRestart': True,
+                    'runOnDemandCloseAfter': '30s',
                 })
 
             cells.append({
@@ -74,6 +74,22 @@ class VideoWallDisplay:
                 'has_bbox': path_bbox is not None,
             })
         return cells
+
+    def _bbox_remux_cmd(self, upstream_url: str) -> str:
+        """DeepStream's bbox/OSD RTSP sink occasionally emits a packet whose
+        DTS is greater than its PTS, which is invalid - mediamtx's fmp4 HLS
+        muxer rejects it and tears itself down each time it happens ("unable
+        to extract DTS: DTS is greater than PTS"). Pull the stream through a
+        local ffmpeg pass-through first and re-stamp packets from wall-clock
+        arrival time instead of trusting the source's own (occasionally
+        broken) timestamps. -c copy keeps this a cheap repacketize, not a
+        re-encode."""
+        return (
+            f'ffmpeg -fflags +genpts -use_wallclock_as_timestamps 1 '
+            f'-rtsp_transport tcp -i "{upstream_url}" '
+            f'-c copy -avoid_negative_ts make_zero '
+            f'-f rtsp rtsp://127.0.0.1:{self.rtsp_port}/$MTX_PATH'
+        )
 
     def sync_dev_videos(self, test_vids: List[str]) -> List[dict]:
         """
