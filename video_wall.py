@@ -55,13 +55,6 @@ class VideoWallDisplay:
                 'source': info['source'],
                 'sourceOnDemand': True,
                 'sourceOnDemandCloseAfter': '30s',
-                # mediamtx's global `protocols: [tcp]` only governs the
-                # transport it offers to readers, not the one it uses to
-                # pull from a source - by default it tries UDP first and
-                # only falls back to TCP after already losing packets
-                # ("no UDP packets received, switching to TCP" in the
-                # logs). Force TCP from the start to avoid that window.
-                'rtspTransport': 'tcp',
             })
 
             path_bbox = None
@@ -71,7 +64,6 @@ class VideoWallDisplay:
                     'source': info['bbox'],
                     'sourceOnDemand': True,
                     'sourceOnDemandCloseAfter': '30s',
-                    'rtspTransport': 'tcp',
                 })
 
             cells.append({
