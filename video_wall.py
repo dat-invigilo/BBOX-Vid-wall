@@ -63,7 +63,12 @@ class VideoWallDisplay:
                 self._ensure_path(path_bbox, {
                     'runOnDemand': self._bbox_remux_cmd(info['bbox']),
                     'runOnDemandRestart': True,
-                    'runOnDemandCloseAfter': '30s',
+                    'runOnDemandCloseAfter': '120s',
+                    # The extra ffmpeg hop needs time to connect to the
+                    # upstream RTSP source and probe it before it starts
+                    # publishing back into mediamtx - mediamtx's 10s default
+                    # was killing it before it got that far.
+                    'runOnDemandStartTimeout': '100s',
                 })
 
             cells.append({
@@ -86,6 +91,10 @@ class VideoWallDisplay:
         re-encode."""
         return (
             f'ffmpeg -fflags +genpts -use_wallclock_as_timestamps 1 '
+            # Bound RTSP stream probing so ffmpeg starts publishing quickly
+            # (codec info already comes from the RTSP SETUP/SDP exchange -
+            # it doesn't need a long analyzeduration for a -c copy pass).
+            f'-analyzeduration 1000000 -probesize 32768 '
             f'-rtsp_transport tcp -i "{upstream_url}" '
             f'-c copy -avoid_negative_ts make_zero '
             f'-f rtsp rtsp://127.0.0.1:{self.rtsp_port}/$MTX_PATH'
