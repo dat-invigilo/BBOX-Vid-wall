@@ -1,19 +1,19 @@
 """
 Web Server for Video Wall Application
-Serves video wall display via HTTP streaming using FFmpeg
+Control plane for the video wall: provisions mediamtx RTSP->HLS relay paths
+and drives recording. The browser plays HLS directly from mediamtx - this
+process no longer decodes or serves any video pixels itself.
 """
-import numpy as np
 import threading
 import time
-from flask import Flask, render_template, Response, jsonify, request, send_file
+from flask import Flask, render_template, jsonify, request, send_file
 from video_wall import VideoWallDisplay
 from video_recorder import VideoWallRecorder
+from mediamtx_client import MediamtxClient
 import logging
 import yaml
 import os
-from io import BytesIO
 import traceback
-from PIL import Image, ImageDraw, ImageFont
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -22,9 +22,6 @@ app = Flask(__name__)
 app.config['JSON_SORT_KEYS'] = False
 
 # Global state
-video_wall = None
-wall_thread = None
-is_running = False
 recorder = None
 config_file = 'config.yaml'
 bbox_on_mode = False  # Global toggle for BBOX_ON mode
@@ -44,38 +41,38 @@ def check_shared_volume():
             files = os.listdir(shared_volume_path)
             file_count = len(files)
             logger.info(f"✓ Shared volume accessible at {shared_volume_path}")
-            
+
             # Try to parse config.yaml from shared volume
             config_path = os.path.join(shared_volume_path, 'config.yaml')
             if os.path.exists(config_path):
                 try:
                     with open(config_path, 'r') as f:
                         shared_config = yaml.safe_load(f)
-                    
+
                     if shared_config and 'DEPLOYMENT' in shared_config:
                         deployment = shared_config['DEPLOYMENT']
                         num_gpus = deployment.get('NUM_GPUS', 0)
                         num_cameras = deployment.get('NUM_CAMERAS_PER_GPU', 0)
                         bbox_on = deployment.get('BBOX_ON', False)
                         total_cameras = num_gpus * num_cameras
-                        
+
                         logger.info(f"✓ Total cameras: {total_cameras}")
                         logger.info(f"✓ BBOX_ON mode: {'ENABLED' if bbox_on else 'DISABLED'}")
-                        
+
                         if bbox_on:
                             logger.info(f"✓ Using localhost ports 7000-700{total_cameras-1}")
                         else:
                             logger.info(f"✓ Parsing deepstream configs for {num_gpus} GPU(s)")
-                            
+
                             # Parse deepstream config files for each GPU
                             for gpu_id in range(num_gpus):
                                 config_file = os.path.join(
-                                    shared_volume_path, 
-                                    'configs', 
-                                    str(gpu_id), 
+                                    shared_volume_path,
+                                    'configs',
+                                    str(gpu_id),
                                     f'deepstream_app_config_gpu{gpu_id}.txt'
                                 )
-                                
+
                                 if os.path.exists(config_file):
                                     logger.info(f"  GPU {gpu_id} config:")
                                     try:
@@ -92,7 +89,7 @@ def check_shared_volume():
                         logger.warning("config.yaml found but no DEPLOYMENT section")
                 except Exception as e:
                     logger.warning(f"Could not parse config.yaml: {str(e)}")
-            
+
             return file_count
         except Exception as e:
             logger.warning(f"Could not read shared volume: {str(e)}")
@@ -112,37 +109,49 @@ def load_config():
     return {}
 
 
+# mediamtx integration - RTSP->HLS relay. web_server.py never decodes/serves
+# video itself; it just keeps mediamtx's path config in sync with the camera
+# list and hands the browser mediamtx's HLS URLs.
+_mediamtx_cfg = load_config().get('mediamtx', {})
+MEDIAMTX_API_URL = _mediamtx_cfg.get('api_url', 'http://127.0.0.1:9997')
+MEDIAMTX_RTSP_PORT = _mediamtx_cfg.get('rtsp_port', 8554)
+MEDIAMTX_HLS_PORT = _mediamtx_cfg.get('hls_port', 8888)
+
+mediamtx_client = MediamtxClient(base_url=MEDIAMTX_API_URL)
+video_wall_display = VideoWallDisplay(mediamtx_client, rtsp_port=MEDIAMTX_RTSP_PORT)
+
+
 def parse_deepstream_uris():
     """Parse URI streams and BBOX ports from deepstream config files"""
     shared_volume_path = '/app/shared_volume'
     streams_info = []
-    
+
     config_path = os.path.join(shared_volume_path, 'config.yaml')
     if not os.path.exists(config_path):
         return streams_info
-    
+
     try:
         with open(config_path, 'r') as f:
             shared_config = yaml.safe_load(f)
-        
+
         if shared_config and 'DEPLOYMENT' in shared_config:
             deployment = shared_config['DEPLOYMENT']
             num_gpus = deployment.get('NUM_GPUS', 0)
-            
+
             # Parse deepstream config files for each GPU
             for gpu_id in range(num_gpus):
                 config_file = os.path.join(
-                    shared_volume_path, 
-                    'configs', 
-                    str(gpu_id), 
+                    shared_volume_path,
+                    'configs',
+                    str(gpu_id),
                     f'deepstream_app_config_gpu{gpu_id}.txt'
                 )
-                
+
                 if os.path.exists(config_file):
                     try:
                         sources = {}  # source_id -> uri
                         sinks = {}    # source_id -> rtsp_port (only for type 4)
-                        
+
                         current_section = None
                         current_source_id = None
                         current_uri = None
@@ -154,18 +163,18 @@ def parse_deepstream_uris():
                             nonlocal current_section, current_source_id, current_uri, current_type, current_rtsp_port, current_sink_source_id
                             if not current_section:
                                 return
-                                
+
                             if current_section.startswith('source'):
                                 # Extract numeric ID from section name, e.g. [source223] -> 223
                                 section_num = current_section.replace('source', '', 1)
                                 source_idx = len(sources)
                                 if current_uri:
                                     sources[source_idx] = {'uri': current_uri, 'section_id': section_num}
-                                    
+
                             elif current_section.startswith('sink'):
                                 if current_type == '4' and current_rtsp_port and current_sink_source_id is not None:
                                     sinks[int(current_sink_source_id)] = current_rtsp_port
-                            
+
                             # Reset for next section
                             current_type = None
                             current_rtsp_port = None
@@ -179,12 +188,12 @@ def parse_deepstream_uris():
                                     continue
                                 if '#' in line:
                                     line = line.split('#')[0].strip()
-                                
+
                                 if line.startswith('[') and line.endswith(']'):
                                     flush_section()
                                     current_section = line[1:-1]
                                     continue
-                                
+
                                 if '=' in line:
                                     key, val = [part.strip() for part in line.split('=', 1)]
                                     if key == 'uri':
@@ -195,9 +204,9 @@ def parse_deepstream_uris():
                                         current_rtsp_port = val
                                     elif key == 'source-id':
                                         current_sink_source_id = val
-                        
+
                         flush_section()
-                        
+
                         # Map sources to their corresponding type-4 sinks
                         for i in sorted(sources.keys()):
                             src = sources[i]
@@ -208,13 +217,13 @@ def parse_deepstream_uris():
                             if i in sinks:
                                 stream_info['bbox'] = f'rtsp://localhost:{sinks[i]}/ds-test'
                             streams_info.append(stream_info)
-                            
+
                     except Exception as e:
                         logger.warning(f"Could not read config for GPU {gpu_id}: {str(e)}")
     except Exception as e:
         logger.error(f"Could not parse deepstream configs: {str(e)}")
         logger.error(traceback.format_exc())
-    
+
     return streams_info
 
 
@@ -222,14 +231,14 @@ def get_streams_from_config():
     """Get streams with their BBOX toggle status"""
     config = load_config()
     dev_mode = config.get('dev_mode', False)
-    
+
     # Use in-memory session toggles instead of reading from config.yaml
     # Format: {index: true/false}
     bbox_toggles = session_bbox_toggles
-    
+
     if dev_mode:
         raw_streams = config.get('test_vids', [])
-        # For dev mode, we don't really have BBOX counterparts usually, 
+        # For dev mode, we don't really have BBOX counterparts usually,
         # but we'll return them as-is.
         streams = raw_streams
     else:
@@ -250,198 +259,98 @@ def get_streams_from_config():
                 else:
                     # Use source URL if BBOX not available or not toggled
                     streams.append(info['source'])
-    
+
     return streams, dev_mode
 
 
+def get_streams_info_for_provisioning(dev_mode_override=None):
+    """
+    Returns (streams_info, dev_mode) describing what mediamtx paths should
+    exist right now.
+
+    - dev_mode=True: streams_info is the list of local test_vids file paths.
+    - dev_mode=False: streams_info is a list of {'source', 'source_id', 'bbox'?}
+      dicts, from parse_deepstream_uris(), falling back to config.yaml's
+      manual `streams` list (wrapped into the same shape) if DeepStream
+      parsing is unavailable.
+
+    dev_mode_override lets callers honor a UI toggle that hasn't been saved
+    to config.yaml yet (see /api/save-mode/config).
+    """
+    config = load_config()
+    dev_mode = dev_mode_override if dev_mode_override is not None else config.get('dev_mode', False)
+
+    if dev_mode:
+        return config.get('test_vids', []), True
+
+    streams_info = parse_deepstream_uris()
+    if not streams_info:
+        streams_info = [
+            {'source': url, 'source_id': str(i)}
+            for i, url in enumerate(config.get('streams', []))
+        ]
+    return streams_info, False
+
+
+def ensure_mediamtx_paths(dev_mode_override=None):
+    """
+    Idempotent: provisions mediamtx paths for the current camera list and
+    returns (cells, dev_mode). Safe to call from any route that needs the
+    current camera->mediamtx-path mapping; never raises.
+    """
+    streams_info, dev_mode = get_streams_info_for_provisioning(dev_mode_override)
+    try:
+        if dev_mode:
+            return video_wall_display.sync_dev_videos(streams_info), dev_mode
+        return video_wall_display.sync_cameras(streams_info), dev_mode
+    except Exception as e:
+        logger.error(f"ensure_mediamtx_paths failed: {e}")
+        return [], dev_mode
+
+
 class VideoWallStreamer:
-    """Handles video wall streaming"""
-    
+    """Tracks whether the wall is 'running' and its grid dimensions. Does not
+    own any stream handlers - mediamtx path provisioning is handled
+    separately via ensure_mediamtx_paths(), independent of this running flag,
+    so save-mode recording works even if the wall was never started."""
+
     def __init__(self):
-        self.wall = None
         self.is_running = False
-        self.thread = None
+        self.cols = 2
+        self.rows = 2
+        self.width = 1920
+        self.height = 1080
         self.lock = threading.Lock()
-        
-    def start(self, streams, cols, rows, width, height):
-        """Start the video wall"""
+
+    def start(self, cols, rows, width, height):
         with self.lock:
-            if self.is_running:
-                logger.warning("Video wall is already running. Stop it first before starting again.")
-                return False
-            
-            try:
-                logger.info(f"Starting video wall with parameters: cols={cols}, rows={rows}, width={width}, height={height}")
-                logger.info(f"Streams to load: {len(streams)} total - {streams}")
-                
-                self.wall = VideoWallDisplay(
-                    streams=streams,
-                    cols=cols,
-                    rows=rows,
-                    output_width=width,
-                    output_height=height
-                )
-                logger.info("VideoWallDisplay instance created successfully")
-                
-                self.wall.start()
-                logger.info("VideoWallDisplay.start() completed")
-                
-                self.is_running = True
-                logger.info(f"Video wall started: {len(streams)} streams in {cols}x{rows} grid")
-                return True
-            except Exception as e:
-                logger.error(f"Error starting video wall: {str(e)}")
-                logger.error(f"Traceback:\n{traceback.format_exc()}")
-                self.is_running = False
-                return False
-    
+            self.cols = cols
+            self.rows = rows
+            self.width = width
+            self.height = height
+            self.is_running = True
+            logger.info(f"Video wall marked running: {cols}x{rows} grid, {width}x{height}")
+            return True
+
     def stop(self):
-        """Stop the video wall"""
         with self.lock:
-            if self.wall:
-                self.wall.stop()
             self.is_running = False
             logger.info("Video wall stopped")
-    
-    def update_stream(self, index, url):
-        """Update a specific stream in the running wall"""
-        with self.lock:
-            if self.wall and self.is_running:
-                return self.wall.update_stream(index, url)
-        return False
-    
-    def get_frame(self):
-        """Get current frame"""
-        with self.lock:
-            if self.wall and self.is_running:
-                return self.wall.get_wall_frame()
-        return None
-    
+
     def get_status(self):
-        """Get current status"""
         with self.lock:
-            if self.wall and self.is_running:
-                return {
-                    'running': True,
-                    'cols': self.wall.cols,
-                    'rows': self.wall.rows,
-                    'width': self.wall.output_width,
-                    'height': self.wall.output_height,
-                    'streams': len([s for s in self.wall.streams if s])
-                }
-        return {'running': False}
+            if not self.is_running:
+                return {'running': False}
+            return {
+                'running': True,
+                'cols': self.cols,
+                'rows': self.rows,
+                'width': self.width,
+                'height': self.height,
+            }
 
 
 streamer = VideoWallStreamer()
-
-
-def generate_placeholder_frame(width=1280, height=720, text="Waiting for video stream..."):
-    """Generate a placeholder/waiting frame using PIL"""
-    # Create a numpy array (BGR format for consistency)
-    frame = np.zeros((height, width, 3), dtype=np.uint8)
-    frame[:] = (40, 40, 80)  # Dark blue background
-    
-    # Convert to PIL Image (RGB)
-    pil_image = Image.fromarray(frame[:, :, ::-1])  # BGR to RGB
-    draw = ImageDraw.Draw(pil_image)
-    
-    # Add text using PIL
-    try:
-        # Try to use a nice font if available
-        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 32)
-    except:
-        # Fallback to default font
-        font = ImageFont.load_default()
-    
-    # Get text bounding box
-    bbox = draw.textbbox((0, 0), text, font=font)
-    text_width = bbox[2] - bbox[0]
-    text_height = bbox[3] - bbox[1]
-    
-    text_x = (width - text_width) // 2
-    text_y = (height - text_height) // 2
-    
-    # Draw text (white color)
-    draw.text((text_x, text_y), text, font=font, fill=(200, 200, 200))
-    
-    # Convert back to numpy array (BGR)
-    frame_array = np.array(pil_image)[:, :, ::-1]  # RGB to BGR
-    return frame_array
-
-
-def encode_frame_to_jpeg(frame):
-    """Encode a numpy array frame to JPEG bytes"""
-    # Convert BGR to RGB for PIL
-    rgb_frame = frame[:, :, ::-1]
-    pil_image = Image.fromarray(rgb_frame)
-    
-    # Encode to JPEG
-    buf = BytesIO()
-    pil_image.save(buf, format='JPEG', quality=90)
-    return buf.getvalue()
-
-def generate_frames():
-    """Generate video stream frames"""
-    stream_id = int(time.time())
-    logger.info(f"generate_frames({stream_id}): Starting - waiting for streamer to be ready")
-    
-    # Wait for streamer to start (with timeout to avoid infinite wait)
-    timeout = 10  # Reduced timeout for switching
-    elapsed = 0
-    wait_interval = 0.5
-    frame_count = 0
-    
-    # Send placeholder frames while waiting for streamer
-    while not streamer.is_running and elapsed < timeout:
-        logger.debug(f"generate_frames({stream_id}): Streamer not running yet, sending placeholder... ({elapsed:.1f}s / {timeout}s)")
-        
-        # Generate placeholder frame to keep connection alive
-        placeholder = generate_placeholder_frame()
-        try:
-            frame_bytes = encode_frame_to_jpeg(placeholder)
-            frame_count += 1
-            
-            yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n'
-                   b'Content-Length: ' + str(len(frame_bytes)).encode() + b'\r\n\r\n' +
-                   frame_bytes + b'\r\n')
-        except Exception as e:
-            logger.error(f"generate_frames({stream_id}): Error creating placeholder: {str(e)}")
-            break
-        
-        time.sleep(wait_interval)
-        elapsed += wait_interval
-    
-    if not streamer.is_running:
-        logger.warning(f"generate_frames({stream_id}): Timeout waiting for streamer to start, terminating generator")
-        return
-    
-    logger.info(f"generate_frames({stream_id}): Streamer is running, starting frame generation")
-    
-    while streamer.is_running:
-        frame = streamer.get_frame()
-        if frame is None:
-            time.sleep(0.01)  # Small delay if no frame available
-            continue
-        
-        try:
-            # Encode frame to JPEG
-            frame_bytes = encode_frame_to_jpeg(frame)
-            
-            frame_count += 1
-            if frame_count % 300 == 0:  # Log every 10 seconds approx
-                logger.debug(f"generate_frames({stream_id}): Sent {frame_count} total frames")
-            
-            # Yield frame in MJPEG format
-            yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n'
-                   b'Content-Length: ' + str(len(frame_bytes)).encode() + b'\r\n\r\n' +
-                   frame_bytes + b'\r\n')
-        except Exception as e:
-            logger.error(f"generate_frames({stream_id}): Error encoding frame: {str(e)}")
-            break
-    
-    logger.info(f"generate_frames({stream_id}): Stream ended after {frame_count} total frames")
 
 
 @app.route('/')
@@ -450,136 +359,48 @@ def index():
     return render_template('index.html')
 
 
-@app.route('/video_feed')
-def video_feed():
-    """Video stream endpoint"""
-    return Response(
-        generate_frames(),
-        mimetype='multipart/x-mixed-replace; boundary=frame'
-    )
-
-
-def generate_single_stream_frames(stream_index):
-    """Generate frames from a single stream for fullscreen view"""
-    stream_id = f"stream_{stream_index}_{int(time.time())}"
-    logger.info(f"generate_single_stream_frames({stream_id}): Starting fullscreen for stream {stream_index}")
-    
-    frame_count = 0
-    
-    # Wait for video wall to be running
-    timeout = 10
-    elapsed = 0
-    wait_interval = 0.5
-    
-    while not streamer.is_running and elapsed < timeout:
-        logger.debug(f"generate_single_stream_frames({stream_id}): Waiting for streamer... ({elapsed:.1f}s)")
-        placeholder = generate_placeholder_frame()
-        try:
-            frame_bytes = encode_frame_to_jpeg(placeholder)
-            yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n'
-                   b'Content-Length: ' + str(len(frame_bytes)).encode() + b'\r\n\r\n' +
-                   frame_bytes + b'\r\n')
-        except Exception as e:
-            logger.error(f"generate_single_stream_frames({stream_id}): Error creating placeholder: {str(e)}")
-            break
-        
-        time.sleep(wait_interval)
-        elapsed += wait_interval
-    
-    if not streamer.is_running:
-        logger.warning(f"generate_single_stream_frames({stream_id}): Timeout waiting for streamer")
-        return
-    
-    # Check if stream index is valid
-    with streamer.lock:
-        if stream_index not in streamer.wall.handlers or not streamer.wall.handlers[stream_index]:
-            logger.error(f"generate_single_stream_frames({stream_id}): Invalid stream index {stream_index}")
-            error_frame = generate_placeholder_frame(text=f"Invalid Stream {stream_index}")
-            try:
-                frame_bytes = encode_frame_to_jpeg(error_frame)
-                yield (b'--frame\r\n'
-                       b'Content-Type: image/jpeg\r\n'
-                       b'Content-Length: ' + str(len(frame_bytes)).encode() + b'\r\n\r\n' +
-                       frame_bytes + b'\r\n')
-            except:
-                pass
-            return
-    
-    logger.info(f"generate_single_stream_frames({stream_id}): Starting frame stream for index {stream_index}")
-    
-    while streamer.is_running:
-        with streamer.lock:
-            handler = streamer.wall.handlers.get(stream_index)
-            if handler:
-                frame = handler.get_frame()
-            else:
-                frame = None
-        
-        if frame is None:
-            time.sleep(0.01)
-            continue
-        
-        try:
-            frame_bytes = encode_frame_to_jpeg(frame)
-            frame_count += 1
-            
-            if frame_count % 300 == 0:
-                logger.debug(f"generate_single_stream_frames({stream_id}): Sent {frame_count} frames")
-            
-            yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n'
-                   b'Content-Length: ' + str(len(frame_bytes)).encode() + b'\r\n\r\n' +
-                   frame_bytes + b'\r\n')
-        except Exception as e:
-            logger.error(f"generate_single_stream_frames({stream_id}): Error encoding frame: {str(e)}")
-            break
-    
-    logger.info(f"generate_single_stream_frames({stream_id}): Stream ended after {frame_count} frames")
-
-
-@app.route('/stream/<int:stream_index>')
-def stream_fullscreen(stream_index):
-    """Fullscreen stream endpoint for individual camera"""
-    logger.debug(f"Fullscreen request for stream {stream_index}")
-    return Response(
-        generate_single_stream_frames(stream_index),
-        mimetype='multipart/x-mixed-replace; boundary=frame'
-    )
-
-
 @app.route('/api/status')
 def api_status():
     """Get wall status"""
     status = streamer.get_status()
     config = load_config()
     status['dev_mode'] = config.get('dev_mode', False)
+    status['hls_port'] = MEDIAMTX_HLS_PORT
+    if status.get('running'):
+        try:
+            streams_info, _ = get_streams_info_for_provisioning()
+            status['streams'] = len(streams_info)
+        except Exception:
+            status['streams'] = 0
     return jsonify(status)
 
 
 @app.route('/api/start', methods=['POST'])
 def api_start():
-    """Start the video wall"""
+    """Start the video wall: provision mediamtx paths for the current camera
+    list and mark the wall as running with the given grid layout."""
     try:
         logger.info("POST /api/start request received")
         data = request.get_json() or {}
         logger.debug(f"Request data: {data}")
-        
+
         streams = data.get('streams') or []
         cols = data.get('cols', 2)
         rows = data.get('rows', 2)
         width = data.get('width', 1920)
         height = data.get('height', 1080)
-        
+
         logger.info(f"Parsed parameters - streams: {len(streams)}, grid: {cols}x{rows}, resolution: {width}x{height}")
-        
+
         if not streams:
             logger.warning("No streams provided in request")
             return jsonify({'error': 'No streams provided'}), 400
-        
-        logger.info(f"Calling streamer.start() with {len(streams)} streams")
-        success = streamer.start(streams, cols, rows, width, height)
-        
+
+        cells, dev_mode = ensure_mediamtx_paths()
+        logger.info(f"Provisioned {len(cells)} mediamtx path(s) (dev_mode={dev_mode})")
+
+        success = streamer.start(cols, rows, width, height)
+
         if success:
             logger.info("Video wall started successfully")
             return jsonify({'status': 'started'})
@@ -594,7 +415,8 @@ def api_start():
 
 @app.route('/api/stop', methods=['POST'])
 def api_stop():
-    """Stop the video wall"""
+    """Stop the video wall (mediamtx paths are left registered - on-demand
+    sourcing means an unwatched path costs nothing)"""
     streamer.stop()
     return jsonify({'status': 'stopped'})
 
@@ -616,30 +438,17 @@ def api_get_config():
 
 @app.route('/api/config', methods=['POST'])
 def api_set_config():
-    """Update configuration (in-memory for toggles to avoid Permission Denied)"""
+    """Update configuration (in-memory for toggles to avoid Permission Denied).
+
+    BBOX toggle no longer drives any backend media action: mediamtx already
+    relays both the source and bbox path for every camera simultaneously, so
+    toggling which one is displayed is purely a frontend URL swap. This just
+    persists the toggle so other clients/reloads see the last-set default.
+    """
     try:
         data = request.get_json() or {}
         global session_bbox_toggles
-        
-        # New bbox toggles from the request - store in memory ONLY
-        new_bbox_toggles = data.get('bbox_toggles', {})
-        old_bbox_toggles = session_bbox_toggles.copy()
-        session_bbox_toggles = new_bbox_toggles
-        
-        # If the wall is running, detect which streams changed their BBOX toggle
-        if streamer.is_running:
-            streams_info = parse_deepstream_uris()
-            if streams_info:
-                for i, info in enumerate(streams_info):
-                    idx_str = str(i)
-                    new_val = session_bbox_toggles.get(idx_str, False)
-                    old_val = old_bbox_toggles.get(idx_str, False)
-                    
-                    if new_val != old_val:
-                        target_url = info['bbox'] if new_val else info['source']
-                        logger.info(f"Dynamic BBOX update: Stream {i} toggle changed to {new_val}. URL: {target_url}")
-                        streamer.update_stream(i, target_url)
-        
+        session_bbox_toggles = data.get('bbox_toggles', {})
         return jsonify({'status': 'saved_in_memory'})
     except Exception as e:
         logger.error(f"Error in api_set_config: {str(e)}")
@@ -669,24 +478,27 @@ def api_set_bbox_mode():
 
 @app.route('/api/streams', methods=['GET'])
 def api_get_streams():
-    """Get list of available streams based on per-stream BBOX mode toggles"""
+    """Get list of available streams, plus per-cell mediamtx path info the
+    frontend needs to build its HLS video grid"""
     try:
-        config = load_config()
-        
         # This function handles the per-stream toggle logic based on the loaded config
         streams, dev_mode = get_streams_from_config()
-        
+
         # Also get source IDs from deepstream parsing
         source_ids = []
         if not dev_mode:
             streams_info = parse_deepstream_uris()
             source_ids = [info.get('source_id', str(i)) for i, info in enumerate(streams_info)]
-        
+
+        cells, _ = ensure_mediamtx_paths()
+
         return jsonify({
             'streams': streams,
             'dev_mode': dev_mode,
             'bbox_toggles': session_bbox_toggles,
-            'source_ids': source_ids
+            'source_ids': source_ids,
+            'hls_port': MEDIAMTX_HLS_PORT,
+            'cells': cells,
         })
     except Exception as e:
         logger.error(f"Error getting streams: {str(e)}")
@@ -695,36 +507,14 @@ def api_get_streams():
 
 @app.route('/api/reparse-configs', methods=['POST'])
 def api_reparse_configs():
-    """Force re-parse of deepstream config files and sync live wall"""
+    """Force re-parse of deepstream config files and sync mediamtx paths"""
     try:
         logger.info("Force re-parsing deepstream configs (POST /api/reparse-configs)")
-        streams_info = parse_deepstream_uris()
-        
-        updates_applied = 0
-        if streamer.is_running and streamer.wall:
-            for i, info in enumerate(streams_info):
-                # Don't try to update more streams than the wall has cells
-                if i >= streamer.wall.total_cells:
-                    break
-                    
-                # Determine what the current URL should be for this cell
-                is_bbox = session_bbox_toggles.get(str(i), False)
-                if is_bbox and 'bbox' in info:
-                    target_url = info['bbox']
-                else:
-                    target_url = info['source']
-                
-                # Check if the URL changed for this live slot
-                current_url = streamer.wall.streams[i]
-                if target_url != current_url:
-                    logger.info(f"Sync: Stream {i} changed from {current_url} to {target_url}")
-                    streamer.update_stream(i, target_url)
-                    updates_applied += 1
-        
+        cells, dev_mode = ensure_mediamtx_paths()
+
         return jsonify({
-            'status': 'success', 
-            'total_streams': len(streams_info),
-            'updates': updates_applied
+            'status': 'success',
+            'total_streams': len(cells),
         })
     except Exception as e:
         logger.error(f"Error in re-parsing configs: {str(e)}")
@@ -737,65 +527,47 @@ def api_reparse_configs():
 
 @app.route('/api/save-mode/config', methods=['GET'])
 def api_savemode_config():
-    """Get available streams for recording"""
+    """Get available streams for recording, as mediamtx-relayed RTSP URLs so
+    the recorder shares mediamtx's single upstream pull per camera instead of
+    opening a second independent connection to it."""
     config = load_config()
-    
+
     # Check if client is passing dev_mode state (to handle UI toggle before saving config)
     dev_mode_param = request.args.get('dev_mode', '').lower()
-    
+    dev_mode_override = None
     if dev_mode_param in ['true', 'false']:
-        # Use the dev_mode from the request (current UI state)
-        dev_mode = dev_mode_param == 'true'
-        logger.info(f"api_savemode_config: Using dev_mode from request: {dev_mode}")
-    else:
-        # Fall back to config file
-        _, dev_mode = get_streams_from_config()
-        logger.info(f"api_savemode_config: Using dev_mode from config file: {dev_mode}")
-    
-    # Get streams based on dev_mode
+        dev_mode_override = dev_mode_param == 'true'
+        logger.info(f"api_savemode_config: Using dev_mode from request: {dev_mode_override}")
+
+    cells, dev_mode = ensure_mediamtx_paths(dev_mode_override)
+
     available_streams = []
     if dev_mode:
-        test_vids = config.get('test_vids', [])
-        for i, url in enumerate(test_vids):
+        for cell in cells:
             available_streams.append({
-                'id': i,
-                'name': f"Test Video {i+1}",
-                'source': url,
+                'id': cell['index'],
+                'name': f"Test Video {cell['index'] + 1}",
+                'url': f"rtsp://127.0.0.1:{MEDIAMTX_RTSP_PORT}/{cell['path_source']}",
                 'type': 'source'
             })
         logger.debug(f"api_savemode_config: Returning {len(available_streams)} test videos")
     else:
-        # Instead of just reading from config.yaml, use the parsed DeepStream URIs
-        streams_info = parse_deepstream_uris()
-        if streams_info:
-            for i, info in enumerate(streams_info):
-                # Add Source stream
+        for cell in cells:
+            available_streams.append({
+                'id': cell['index'],
+                'name': f"Camera {cell['index'] + 1} (Source)",
+                'url': f"rtsp://127.0.0.1:{MEDIAMTX_RTSP_PORT}/{cell['path_source']}",
+                'type': 'source'
+            })
+            if cell['has_bbox']:
                 available_streams.append({
-                    'id': i,
-                    'name': f"Camera {i+1} (Source)",
-                    'url': info['source'],
-                    'type': 'source'
+                    'id': cell['index'],
+                    'name': f"Camera {cell['index'] + 1} (BBOX)",
+                    'url': f"rtsp://127.0.0.1:{MEDIAMTX_RTSP_PORT}/{cell['path_bbox']}",
+                    'type': 'bbox'
                 })
-                # Add BBOX stream if available
-                if 'bbox' in info and info['bbox']:
-                    available_streams.append({
-                        'id': i,
-                        'name': f"Camera {i+1} (BBOX)",
-                        'url': info['bbox'],
-                        'type': 'bbox'
-                    })
-            logger.info(f"api_savemode_config: Returning {len(available_streams)} parsed streams")
-        else:
-            streams = config.get('streams', [])
-            for i, url in enumerate(streams):
-                available_streams.append({
-                    'id': i,
-                    'name': f"Camera {i+1}",
-                    'url': url,
-                    'type': 'source'
-                })
-            logger.debug(f"api_savemode_config: Returning {len(available_streams)} RTSP streams from config.yaml")
-    
+        logger.info(f"api_savemode_config: Returning {len(available_streams)} parsed streams")
+
     return jsonify({
         'dev_mode': dev_mode,
         'available_streams': available_streams,
@@ -807,36 +579,36 @@ def api_savemode_config():
 def api_savemode_start():
     """Start recording selected streams (allows starting individual streams)"""
     global recorder
-    
+
     try:
         data = request.get_json() or {}
         # selected_streams format: list of objects {id, url, type, name}
         selected_streams = data.get('selected_streams', [])
         dev_mode = data.get('dev_mode', False)
-        
+
         logger.info(f"api_savemode_start: dev_mode={dev_mode}, selected_count={len(selected_streams)}")
-        
+
         if not selected_streams:
             return jsonify({'error': 'No streams selected'}), 400
-        
+
         # Build streams dict for recorder: { "stream_id_type": url }
         streams_dict = {}
         for item in selected_streams:
             stream_id = item.get('id')
             stream_type = item.get('type', 'source')
             stream_url = item.get('url')
-            
+
             if stream_id is not None and stream_url:
                 unique_key = f"{stream_id}_{stream_type}"
                 streams_dict[unique_key] = stream_url
                 logger.debug(f"api_savemode_start: Added {stream_type} stream {stream_id}: {stream_url}")
-        
+
         if not streams_dict:
             return jsonify({'error': 'No valid streams provided'}), 400
-        
+
         config = load_config()
         save_config = config.get('save_mode', {})
-        
+
         # Initialize recorder if needed
         if not recorder:
             output_dir = save_config.get('output_directory', './recordings')
@@ -845,7 +617,7 @@ def api_savemode_start():
             fps = save_config.get('fps', 30)
             width = save_config.get('recording_width', 1920)
             height = save_config.get('recording_height', 1080)
-            
+
             recorder = VideoWallRecorder(
                 output_dir=output_dir,
                 chunk_duration_minutes=chunk_minutes,
@@ -854,9 +626,9 @@ def api_savemode_start():
                 width=width,
                 height=height
             )
-        
+
         success = recorder.start_recording_extended(streams_dict)
-        
+
         if success:
             logger.info(f"api_savemode_start: Recording update successful")
             return jsonify({
@@ -865,7 +637,7 @@ def api_savemode_start():
             })
         else:
             return jsonify({'error': 'Failed to update recording'}), 500
-            
+
     except Exception as e:
         logger.error(f"Error in api_savemode_start: {str(e)}")
         return jsonify({'error': str(e)}), 500
@@ -878,10 +650,10 @@ def api_savemode_stop_stream():
     try:
         data = request.get_json() or {}
         stream_key = data.get('stream_key') # e.g. "0_source" or "1_bbox"
-        
+
         if not recorder or not stream_key:
             return jsonify({'error': 'No active recorder or stream key'}), 400
-            
+
         success = recorder.stop_stream_recording(stream_key)
         return jsonify({'status': 'stopped' if success else 'not_found', 'key': stream_key})
     except Exception as e:
@@ -893,20 +665,20 @@ def api_savemode_stop_stream():
 def api_savemode_stop():
     """Stop recording"""
     global recorder
-    
+
     try:
         if not recorder or not recorder.is_recording:
             return jsonify({'error': 'No recording in progress'}), 400
-        
+
         recorder.stop_recording()
         recordings = recorder.list_recordings()
-        
+
         return jsonify({
             'status': 'stopped',
             'total_files': sum(len(files) for files in recordings.values()),
             'recordings': recordings
         })
-        
+
     except Exception as e:
         logger.error(f"Error in api_savemode_stop: {str(e)}")
         return jsonify({'error': str(e)}), 500
@@ -916,17 +688,17 @@ def api_savemode_stop():
 def api_savemode_status():
     """Get recording status"""
     global recorder
-    
+
     try:
         if not recorder:
             return jsonify({'recording': False})
-        
+
         status = recorder.get_status()
         status['disk_usage_gb'] = recorder.get_disk_usage()
         status['recordings'] = recorder.list_recordings()
-        
+
         return jsonify(status)
-        
+
     except Exception as e:
         logger.error(f"Error in api_savemode_status: {str(e)}")
         return jsonify({'error': str(e)}), 500
@@ -936,20 +708,20 @@ def api_savemode_status():
 def api_savemode_files():
     """List all recorded files"""
     global recorder
-    
+
     try:
         if not recorder:
             return jsonify({'recordings': {}})
-        
+
         recordings = recorder.list_recordings()
         disk_usage = recorder.get_disk_usage()
-        
+
         return jsonify({
             'recordings': recordings,
             'disk_usage_gb': disk_usage,
             'total_files': sum(len(files) for files in recordings.values())
         })
-        
+
     except Exception as e:
         logger.error(f"Error in api_savemode_files: {str(e)}")
         return jsonify({'error': str(e)}), 500
@@ -960,20 +732,20 @@ def api_savemode_download():
     """Download a recorded file"""
     try:
         file_path = request.args.get('file_path')
-        
+
         if not file_path or not os.path.exists(file_path):
             return jsonify({'error': 'File not found'}), 404
-        
+
         # Verify file is within recordings directory
         recordings_dir = os.path.abspath('./recordings')
         file_abs = os.path.abspath(file_path)
-        
+
         if not file_abs.startswith(recordings_dir):
             return jsonify({'error': 'Invalid file path'}), 403
-        
+
         filename = os.path.basename(file_path)
         return send_file(file_path, as_attachment=True, download_name=filename)
-        
+
     except Exception as e:
         logger.error(f"Error in api_savemode_download: {str(e)}")
         return jsonify({'error': str(e)}), 500
@@ -981,7 +753,7 @@ def api_savemode_download():
 
 def _inactivity_watchdog():
     """Background thread that auto-stops the wall if the frontend goes away.
-    
+
     Runs every 15 seconds.  If the wall is running and no heartbeat has been
     received for HEARTBEAT_TIMEOUT_SECONDS, it stops both the video wall and
     any active recording to free resources.
@@ -1016,13 +788,13 @@ if __name__ == '__main__':
     logger.info("=" * 60)
     logger.info("Video Wall Web Server Starting")
     logger.info("=" * 60)
-    
+
     # Check shared volume
     file_count = check_shared_volume()
-    
+
     # Start inactivity watchdog
     watchdog_thread = threading.Thread(target=_inactivity_watchdog, daemon=True)
     watchdog_thread.start()
-    
+
     logger.info("=" * 60)
     app.run(host='0.0.0.0', port=5002, debug=False, threaded=True)

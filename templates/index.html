@@ -196,8 +196,7 @@
             <div style="flex: 1; display: flex; flex-direction: column; overflow: hidden; position: relative;">
                 <div class="video-container" id="videoContainer">
                     <div style="position: relative; line-height: 0;">
-                        <img id="videoFeed" class="video-feed" src="/video_feed" alt="Video feed"
-                            style="display: none;">
+                        <div id="videoGrid" class="video-grid" style="display: none;"></div>
 
                         <!-- New Streams Overlay for Controls -->
                         <div id="streamsOverlay" class="streams-overlay"></div>
@@ -205,7 +204,7 @@
 
                     <!-- Dedicated Fullscreen Overlay (Hidden by default) -->
                     <div id="fullscreenOverlay" class="fullscreen-video-overlay" style="display: none;">
-                        <img id="fullscreenFeed" src="" alt="Fullscreen Feed">
+                        <video id="fullscreenFeed" muted autoplay playsinline></video>
                         <div id="fullscreenControls" class="stream-cell-controls is-fullscreen"
                             style="background: transparent !important; pointer-events: none;">
                             <!-- The kebab menu will be cloned here in JS -->
@@ -229,10 +228,32 @@
         </div>
     </div>
 
+    <script src="{{ url_for('static', filename='js/hls.min.js') }}"></script>
     <script>
         const API_BASE = window.location.origin;
         let statusCheckInterval = null;
         let heartbeatInterval = null;
+        let lastCells = [];  // most recent /api/streams `cells` array, indexed by cell index
+
+        function hlsUrlFor(pathName, hlsPort) {
+            const port = hlsPort || 8888;
+            return `http://${window.location.hostname}:${port}/${pathName}/index.m3u8`;
+        }
+
+        function attachHls(videoEl, url) {
+            if (videoEl._hls) {
+                videoEl._hls.destroy();
+                videoEl._hls = null;
+            }
+            if (window.Hls && Hls.isSupported()) {
+                const hls = new Hls();
+                hls.loadSource(url);
+                hls.attachMedia(videoEl);
+                videoEl._hls = hls;
+            } else if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
+                videoEl.src = url; // Safari native HLS
+            }
+        }
 
         function toggleLogConsole() {
             const console = document.getElementById('logConsole');
@@ -311,13 +332,13 @@
                     const statusDot = document.getElementById('statusDot');
                     const statusText = document.getElementById('statusText');
                     const placeholder = document.getElementById('placeholder');
-                    const videoFeed = document.getElementById('videoFeed');
+                    const videoGrid = document.getElementById('videoGrid');
 
                     if (data.running) {
                         statusDot.classList.add('running');
                         statusText.textContent = 'Running';
                         placeholder.style.display = 'none';
-                        videoFeed.style.display = 'block';
+                        videoGrid.style.display = 'grid';
                         document.getElementById('startBtn').disabled = true;
                         document.getElementById('stopBtn').disabled = false;
                         document.getElementById('stopBtn').textContent = 'Stop';
@@ -345,7 +366,30 @@
                                     // Ensure exact height match for the overlay
                                     overlay.style.aspectRatio = `${cols}/${rows}`;
 
+                                    // Build the HLS video grid, pixel-aligned with the control overlay above
+                                    lastCells = streamData.cells || [];
+                                    videoGrid.querySelectorAll('video').forEach(v => {
+                                        if (v._hls) v._hls.destroy();
+                                    });
+                                    videoGrid.innerHTML = '';
+                                    videoGrid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+                                    videoGrid.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+                                    videoGrid.style.aspectRatio = `${cols}/${rows}`;
+
                                     const bbox_toggles = streamData.bbox_toggles || {};
+                                    lastCells.forEach(cell => {
+                                        const is_bbox = (bbox_toggles[cell.index] || bbox_toggles[String(cell.index)] || false) && cell.has_bbox;
+                                        const pathName = is_bbox ? cell.path_bbox : cell.path_source;
+                                        const video = document.createElement('video');
+                                        video.id = `cellVideo_${cell.index}`;
+                                        video.muted = true;
+                                        video.autoplay = true;
+                                        video.playsInline = true;
+                                        videoGrid.appendChild(video);
+                                        attachHls(video, hlsUrlFor(pathName, streamData.hls_port));
+                                        video._currentPath = pathName;
+                                    });
+
                                     for (let i = 0; i < streamsCount; i++) {
                                         const is_bbox = bbox_toggles[i] || (bbox_toggles[String(i)] || false);
                                         // Check if sidebar has a playing toggle for this stream
@@ -393,15 +437,19 @@
                         statusDot.classList.remove('running');
                         statusText.textContent = 'Stopped';
                         placeholder.style.display = 'block';
-                        videoFeed.style.display = 'none';
+                        videoGrid.style.display = 'none';
                         document.getElementById('startBtn').disabled = false;
                         document.getElementById('stopBtn').disabled = true;
                         document.getElementById('stopBtn').textContent = 'Stop';
                         document.getElementById('restartBtn').disabled = true;
                         document.getElementById('restartBtn').textContent = '⟳ Restart';
 
-                        // Clear overlay when stopped
+                        // Clear overlay and video grid when stopped
                         document.getElementById('streamsOverlay').innerHTML = '';
+                        videoGrid.querySelectorAll('video').forEach(v => {
+                            if (v._hls) v._hls.destroy();
+                        });
+                        videoGrid.innerHTML = '';
                     }
 
                     if (data.running) {
@@ -498,16 +546,15 @@
                     if (data.status === 'started') {
                         showMessage('Video wall started!', 'success');
 
-                        // Immediately show video feed without waiting for status check
-                        console.log('[startWall] Showing video feed immediately');
-                        const videoFeed = document.getElementById('videoFeed');
+                        // Immediately show the video grid without waiting for status check
+                        // (updateStatus() below will populate it with per-cell HLS players)
+                        console.log('[startWall] Showing video grid immediately');
+                        const videoGrid = document.getElementById('videoGrid');
                         const statusDot = document.getElementById('statusDot');
                         const statusText = document.getElementById('statusText');
 
                         placeholder.style.display = 'none';
-                        // Force refresh of the video feed image with a cache-busting timestamp
-                        videoFeed.src = `${API_BASE}/video_feed?t=${new Date().getTime()}`;
-                        videoFeed.style.display = 'block';
+                        videoGrid.style.display = 'grid';
                         statusDot.classList.add('running');
                         statusText.textContent = 'Running';
                         document.getElementById('startBtn').disabled = true;
@@ -529,16 +576,19 @@
 
         function stopWall() {
             const stopBtn = document.getElementById('stopBtn');
-            const videoFeed = document.getElementById('videoFeed');
+            const videoGrid = document.getElementById('videoGrid');
             const placeholder = document.getElementById('placeholder');
 
             stopBtn.disabled = true;
             stopBtn.textContent = 'Stopping...';
             document.getElementById('restartBtn').disabled = true;
 
-            // Immediately clear video feed source to break the browser connection
-            videoFeed.style.display = 'none';
-            videoFeed.src = '';
+            // Immediately tear down HLS players to break the browser connections
+            videoGrid.querySelectorAll('video').forEach(v => {
+                if (v._hls) v._hls.destroy();
+            });
+            videoGrid.innerHTML = '';
+            videoGrid.style.display = 'none';
 
             fetch(`${API_BASE}/api/stop`, { method: 'POST' })
                 .then(r => r.json())
@@ -560,16 +610,19 @@
              * Stops the current wall first, waits for it to fully stop, then starts again.
              */
             const restartBtn = document.getElementById('restartBtn');
-            const videoFeed = document.getElementById('videoFeed');
+            const videoGrid = document.getElementById('videoGrid');
             const placeholder = document.getElementById('placeholder');
 
             restartBtn.disabled = true;
             restartBtn.textContent = '⟳ Restarting...';
             document.getElementById('stopBtn').disabled = true;
 
-            // Immediately clear video feed
-            videoFeed.style.display = 'none';
-            videoFeed.src = '';
+            // Immediately tear down HLS players
+            videoGrid.querySelectorAll('video').forEach(v => {
+                if (v._hls) v._hls.destroy();
+            });
+            videoGrid.innerHTML = '';
+            videoGrid.style.display = 'none';
 
             showMessage('Restarting wall with selected streams...', 'info');
 
@@ -701,6 +754,20 @@
                 });
         }
 
+        function swapCellSource(index, wantBbox) {
+            /**
+             * Both the source and bbox mediamtx paths for a camera exist
+             * simultaneously, so toggling BBOX is just a client-side HLS
+             * source swap - no backend/media action or wall restart needed.
+             */
+            const cell = lastCells.find(c => c.index === index);
+            const video = document.getElementById(`cellVideo_${index}`);
+            if (!cell || !video) return;
+            const pathName = (wantBbox && cell.path_bbox) ? cell.path_bbox : cell.path_source;
+            attachHls(video, hlsUrlFor(pathName));
+            video._currentPath = pathName;
+        }
+
         function onPerStreamBboxToggle(index, checked) {
             console.log(`[onPerStreamBboxToggle] Stream ${index} -> ${checked}`);
 
@@ -722,8 +789,11 @@
                 document.getElementById('bboxMode').checked = allChecked;
             }
 
-            // Save configuration
+            // Save configuration (so other clients/reloads see the new default)
             saveConfig(bbox_toggles);
+
+            // Swap this cell's HLS source immediately - no restart needed
+            swapCellSource(index, checked);
 
             showMessage(`Stream ${index + 1} BBOX updated`, 'info');
         }
@@ -769,7 +839,10 @@
             if (isClosing) {
                 addLog(`Exiting Fullscreen...`, 'info');
                 overlay.style.display = 'none';
-                fsFeed.src = ""; // Stop stream
+                if (fsFeed._hls) {
+                    fsFeed._hls.destroy();
+                    fsFeed._hls = null;
+                }
                 fsControls.innerHTML = "";
             } else {
                 addLog(`Opening Isolated Stream ${index + 1}...`, 'info');
@@ -777,9 +850,13 @@
                 // Show the overlay
                 overlay.style.display = 'flex';
 
-                // Set the specific stream source
-                // Backend endpoint /stream/<index> provides individual MJPEG
-                fsFeed.src = `/stream/${index}`;
+                // Mirror whichever variant (source/bbox) is currently shown in the grid cell
+                const cell = lastCells.find(c => c.index === index);
+                const cellVideo = document.getElementById(`cellVideo_${index}`);
+                if (cell) {
+                    const pathName = (cellVideo && cellVideo._currentPath) || cell.path_source;
+                    attachHls(fsFeed, hlsUrlFor(pathName));
+                }
 
                 // Clone the specific kebab menu so controls still work in fullscreen
                 const originalMenu = document.querySelector(`#streamsOverlay .stream-cell-controls:nth-child(${index + 1})`).innerHTML;
@@ -804,10 +881,11 @@
                 checkbox.checked = checked;
                 const idx = checkbox.id.replace('bbox_check_overlay_', '');
                 bbox_toggles[idx] = checked;
+                swapCellSource(parseInt(idx), checked);
             });
 
             saveConfig(bbox_toggles);
-            showMessage(`All streams BBOX Mode: ${checked ? 'ON' : 'OFF'}. Restart wall to apply.`, 'info');
+            showMessage(`All streams BBOX Mode: ${checked ? 'ON' : 'OFF'}`, 'info');
         }
 
         function loadConfig() {

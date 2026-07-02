@@ -4,61 +4,31 @@
 
 ### Option 1: Docker (Recommended)
 
-**On Linux/Mac:**
 ```bash
-# Build
-docker build -t bbox-video-wall .
-
-# Or use script
-bash build.sh
-
-# Run with docker-compose
-docker-compose up -d
-
-# View logs
-docker-compose logs -f
-```
-
-**On Windows:**
-```cmd
-# Build
-docker build -t bbox-video-wall .
-
-# Or use script
-build.bat
-
-# Run
+# Starts both the video-wall app and its mediamtx RTSP->HLS relay
 docker-compose up -d
 
 # View logs
 docker-compose logs -f video-wall
+docker-compose logs -f mediamtx
 ```
 
 ### Option 2: Local (Python)
 
-**Linux/Mac:**
 ```bash
-# Setup environment
-bash setup-dev.sh
-
-# Activate environment
-source venv/bin/activate
-
-# Run app
-python app.py
-```
-
-**Windows:**
-```cmd
 # Create venv
 python -m venv venv
-venv\Scripts\activate
+venv\Scripts\activate      # Windows
+# source venv/bin/activate # Linux/Mac
 
 # Install dependencies
 pip install -r requirements.txt
 
-# Run app
-python app.py
+# Run mediamtx separately (native binary or `docker run`), pointed at
+# mediamtx.yml in this repo - web_server.py talks to it over its REST API.
+
+# Run the web server
+python web_server.py
 ```
 
 ## First Run
@@ -72,9 +42,9 @@ streams:
   - 'rtsp://camera4:554/stream'
 ```
 
-2. **Launch the app**
-3. **Click "Start Wall"** in the GUI
-4. **Watch your streams** in a beautiful grid!
+2. **Open** `http://localhost:5002` in a browser
+3. **Click "Start"** - this provisions mediamtx relay paths for each camera
+4. **Watch your streams** in the browser-composited grid!
 
 ## Common Issues
 
@@ -105,24 +75,6 @@ rtsp://devimages-cdn.apple.com/iphone/samples/bipbop/bipbopall.m3u8
 file:///path/to/video.mp4
 ```
 
-## CLI Usage (Headless)
-
-```bash
-# From config file
-python cli.py --config config.yaml --headless
-
-# With command-line args
-python cli.py --streams rtsp://cam1 rtsp://cam2 \
-              --cols 2 --rows 2 \
-              --width 1920 --height 1080 \
-              --headless
-
-# Output to file
-python cli.py --streams rtsp://cam1 rtsp://cam2 \
-              --output wall.mp4 \
-              --headless
-```
-
 ## Performance Tips
 
 - **2×2 grid (4 streams)**: ~400MB RAM, 60% CPU
@@ -141,7 +93,7 @@ docker-compose logs video-wall
 docker stats bbox-video-wall
 
 # Access the app
-# The GUI shows connection status for each stream
+# The web UI shows connection status for each stream
 ```
 
 ## Next Steps

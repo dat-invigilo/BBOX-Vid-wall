@@ -1,117 +1,112 @@
 # Video Wall Application - README
 
 ## Overview
-A professional Python-based video wall application that displays multiple RTSP streams in a grid layout. Built with PyQt5 and OpenCV, containerized with Docker for easy deployment.
+A Flask-based video wall control app that displays multiple RTSP camera streams
+(including DeepStream BBOX overlay variants) in a browser grid. [mediamtx](https://github.com/bluenviron/mediamtx)
+relays each camera's RTSP stream once and re-serves it as HLS; the browser
+plays each cell directly from mediamtx via hls.js and composites the grid
+itself with CSS. `web_server.py` is pure control-plane: it provisions
+mediamtx's relay paths and drives recording, but never decodes or serves
+video pixels itself.
+
+See [mediamtx-migration.md](mediamtx-migration.md) for the design rationale.
 
 ## Features
-- ✅ Multi-stream RTSP support (up to 16 streams in 4x4 grid)
-- ✅ Flexible grid layout (1x1 to 4x4)
-- ✅ Multiple output resolutions (1280x720, 1920x1080, 2560x1440)
-- ✅ Real-time stream management and error handling
-- ✅ Configurable via GUI or YAML config files
-- ✅ Docker containerization for easy deployment
-- ✅ Automatic reconnection on stream failures
-- ✅ Professional GUI with PyQt5
-- ✅ Aspect ratio preservation with black borders
-- ✅ Stream monitoring and status display
+- ✅ Multi-stream RTSP support in a configurable grid
+- ✅ Per-stream BBOX/source toggle, swapped client-side with no restart needed
+- ✅ Browser-side HLS playback (hls.js) - server never decodes video
+- ✅ Fullscreen single-camera view
+- ✅ Recording (Save Mode) with chunked/rotating MP4 output
+- ✅ Docker containerization (`video-wall` + `mediamtx` services)
+- ✅ Dev mode with local test video files for testing without cameras
 
 ## Requirements
 - Python 3.11+
-- Docker & Docker Compose (for container deployment)
-- X11 display server (for GUI rendering on Linux/Unix)
+- Docker & Docker Compose (recommended deployment path)
+- `ffmpeg` (installed in the Docker image; needed locally too if running without Docker)
 
 ## Installation
 
-### Local Installation (Non-Docker)
+### Docker (recommended)
 
-1. Clone/download the project:
 ```bash
-cd BBOX-Vid-wall
+docker-compose up -d
 ```
 
-2. Install dependencies:
+This starts two services (see `docker-compose.yml`):
+- `video-wall` - the Flask control-plane app (port 5002)
+- `mediamtx` - the RTSP relay / HLS server (API :9997, RTSP :8554, HLS :8888)
+
+Both use `network_mode: host` so they reach cameras and each other via
+`127.0.0.1`.
+
+### Local (non-Docker)
+
+1. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-3. Create/edit `config.yaml` with your camera streams:
-```yaml
-cols: 2
-rows: 2
-resolution: '1920x1080'
-streams:
-  - 'rtsp://camera1:554/stream'
-  - 'rtsp://camera2:554/stream'
-  - 'rtsp://camera3:554/stream'
-  - 'rtsp://camera4:554/stream'
-```
+2. Run mediamtx separately (native binary or `docker run`), pointed at
+   `mediamtx.yml` in this repo.
 
-4. Run the application:
+3. Edit `config.yaml` with your camera streams and mediamtx connection info
+   (see the `mediamtx:` section).
+
+4. Run the web server:
 ```bash
-python app.py
+python web_server.py
 ```
 
-### Docker Installation
-
-#### Build the image:
-```bash
-docker build -t bbox-video-wall:latest .
-```
-
-#### Run with Docker Compose:
-```bash
-docker-compose up -d
-```
-
-#### Run standalone:
-```bash
-docker run -it \
-  -e DISPLAY=$DISPLAY \
-  -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
-  -v $(pwd)/config.yaml:/app/config.yaml \
-  bbox-video-wall:latest
-```
+5. Open `http://localhost:5002` in a browser.
 
 ## Usage
 
-### GUI Application
-1. Launch `python app.py`
-2. Configure grid layout (columns and rows)
-3. Select output resolution
-4. Enter RTSP stream URLs (one per line)
-5. Click "Start Wall" to begin streaming
-6. Save configuration for future use
-
-### Headless Mode (Docker)
-The application supports headless operation for servers without display:
-```bash
-docker-compose up -d
-```
-
-Stream output can be piped to:
-- RTMP endpoint
-- HTTP streaming server
-- Local file
+1. Open the web UI, configure grid layout (columns/rows) and resolution.
+2. Enter RTSP stream URLs (or use test videos via Dev Mode).
+3. Click **Start** - this provisions mediamtx paths for each camera and marks
+   the wall running; the browser then builds a CSS grid of `<video>` elements
+   playing each camera's HLS stream.
+4. Use the kebab menu on each cell to toggle BBOX mode, start/stop recording,
+   or go fullscreen.
 
 ## Configuration
 
 ### YAML Format (config.yaml)
 ```yaml
+dev_mode: false
 cols: 2                    # Grid columns
 rows: 2                    # Grid rows
 resolution: '1920x1080'    # Output resolution
-streams:                   # List of RTSP URLs
+streams:                   # List of RTSP URLs (used when DeepStream config parsing is unavailable)
   - 'rtsp://...'
-  - 'rtsp://...'
+test_vids:                 # Local files used when dev_mode: true
+  - './test_videos/sample1.mp4'
 performance:
-  buffer_size: 2          # Frames to buffer per stream
-  max_fps: 30             # Display FPS limit
-  reconnect_delay: 2      # Reconnection wait time
+  buffer_size: 2
+  max_fps: 30
+  reconnect_delay: 2
+mediamtx:                  # Must match mediamtx.yml / docker-compose.yml
+  api_url: 'http://127.0.0.1:9997'
+  rtsp_port: 8554
+  hls_port: 8888
+save_mode:
+  enabled: false
+  output_directory: '/app/recordings'
+  fps: 30
+  recording_width: 1920
+  recording_height: 1080
+  chunk_duration_minutes: 30
+  total_rotation_minutes: 180
 ```
+
+In deployments where cameras come from a DeepStream pipeline, `web_server.py`
+instead parses `/app/shared_volume/config.yaml` and the per-GPU DeepStream
+`.txt` configs to discover camera + BBOX sink URLs automatically
+(`parse_deepstream_uris()`); the `streams:` list above is only a fallback.
 
 ## RTSP Stream URLs
 
-### Common Formats
 ```
 # Basic format
 rtsp://username:password@host:554/stream1
@@ -121,86 +116,65 @@ rtsp://192.168.1.100:554/stream
 
 # Axis camera
 rtsp://admin:password@camera-ip/axis-media/media.amp
-
-# Uniview camera
-rtsp://admin:password@camera-ip:554/stream
-
-# Generic camera
-rtsp://10.0.0.1:554/
 ```
-
-## Performance Optimization
-
-### For 4K streams:
-- Set resolution to 2560x1440
-- Adjust grid to 2x2
-- Increase CPU/memory allocation
-
-### For many streams:
-- Use smaller grid
-- Lower resolution
-- Increase buffer size if experiencing lag
 
 ## Troubleshooting
 
 ### Streams not connecting
 - Verify RTSP URLs and network connectivity
 - Check firewall rules on port 554
-- Ensure credentials are correct
+- Check mediamtx's own logs (`docker-compose logs -f mediamtx`) - it's what
+  actually holds the upstream camera connection
+- Confirm mediamtx's API is reachable from `video-wall` at the `mediamtx.api_url`
+  configured in `config.yaml`
 
-### Performance issues
-- Reduce number of streams
-- Lower output resolution
-- Reduce FPS limit in config
-- Allocate more CPU/memory
+### Video grid shows nothing / spins forever
+- Confirm mediamtx's HLS port (`8888` by default) is reachable from the
+  browser, not just from the `video-wall` container
+- Check the browser console for hls.js errors
 
-### Display issues (Docker)
-- Ensure X11 socket is properly mounted
-- Set DISPLAY environment variable correctly
-- For headless: implement RTMP/HTTP output
-
-### Memory usage too high
-- Reduce buffer_size in config.yaml
-- Lower grid dimensions
-- Use resolution 1280x720
+### Recording not starting
+- Recording pulls from mediamtx's relayed RTSP URL
+  (`rtsp://127.0.0.1:{rtsp_port}/<path>`), not the original camera - confirm
+  mediamtx has that path registered via `GET http://<host>:9997/v3/paths/list`
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────┐
-│         Video Wall Application          │
-├─────────────────────────────────────────┤
-│                                         │
-│  PyQt5 GUI Layer                        │
-│  └─> Display Manager                    │
-│                                         │
-│  Video Wall Core                        │
-│  └─> Grid Layout Engine                 │
-│      └─> Cell Renderer (resize/scale)   │
-│                                         │
-│  Stream Management                      │
-│  ├─> Stream Handler 1 (thread)          │
-│  ├─> Stream Handler 2 (thread)          │
-│  ├─> Stream Handler 3 (thread)          │
-│  └─> Stream Handler N (thread)          │
-│      └─> RTSP Connection (OpenCV)       │
-│                                         │
-└─────────────────────────────────────────┘
+Browser (grid of <video> + hls.js)
+    |  HLS (mediamtx :8888)
+    v
+mediamtx  <---- RTSP pull (once per camera) ---- Cameras / DeepStream sinks
+    ^
+    | REST API (mediamtx :9997) - path provisioning
+    |
+web_server.py (Flask, control-plane only)
+    |
+    +-- video_wall.py       - maps cameras -> mediamtx paths
+    +-- mediamtx_client.py  - REST client for mediamtx's API
+    +-- video_recorder.py / ffmpeg_recorder.py
+            - records from mediamtx-relayed RTSP URLs, independent of the
+              live view, to chunked/rotating MP4 files
 ```
 
 ## File Structure
 
 ```
 BBOX-Vid-wall/
-├── app.py                    # Main PyQt5 application
-├── video_wall.py             # Video wall display engine
-├── stream_handler.py         # RTSP stream management
-├── config.yaml              # Configuration file
-├── requirements.txt         # Python dependencies
-├── Dockerfile               # Container image definition
-├── docker-compose.yml       # Docker orchestration
-├── entrypoint.sh            # Container startup script
-└── README.md                # This file
+├── web_server.py             # Flask control-plane app
+├── video_wall.py             # mediamtx path manager (camera -> HLS path mapping)
+├── mediamtx_client.py        # REST client for mediamtx's control API
+├── video_recorder.py         # Recording orchestration (chunking/rotation)
+├── ffmpeg_recorder.py        # Per-stream ffmpeg recording subprocess
+├── mediamtx.yml               # mediamtx server config
+├── config.yaml                # App configuration
+├── requirements.txt           # Python dependencies
+├── Dockerfile                 # video-wall container image
+├── docker-compose.yml         # video-wall + mediamtx services
+├── templates/index.html       # Web UI (grid, controls, recording)
+├── static/css/style.css
+├── static/js/hls.min.js       # Vendored hls.js
+└── README.md                  # This file
 ```
 
 ## Docker Commands
@@ -210,12 +184,7 @@ BBOX-Vid-wall/
 docker build -t bbox-video-wall:latest .
 ```
 
-### Run
-```bash
-docker run -it bbox-video-wall:latest
-```
-
-### Compose up
+### Compose up (both services)
 ```bash
 docker-compose up -d
 ```
@@ -223,41 +192,12 @@ docker-compose up -d
 ### View logs
 ```bash
 docker-compose logs -f video-wall
+docker-compose logs -f mediamtx
 ```
 
 ### Stop
 ```bash
 docker-compose down
-```
-
-### Push to registry
-```bash
-docker tag bbox-video-wall:latest myregistry/bbox-video-wall:latest
-docker push myregistry/bbox-video-wall:latest
-```
-
-## API/Programmatic Usage
-
-```python
-from video_wall import VideoWallDisplay
-
-# Initialize
-wall = VideoWallDisplay(
-    streams=['rtsp://cam1', 'rtsp://cam2', 'rtsp://cam3', 'rtsp://cam4'],
-    cols=2,
-    rows=2,
-    output_width=1920,
-    output_height=1080
-)
-
-# Start streaming
-wall.start()
-
-# Get composite frame
-frame = wall.get_wall_frame()
-
-# Stop
-wall.stop()
 ```
 
 ## Logging
@@ -267,30 +207,5 @@ Logs are written to console. For persistent logs in Docker:
 docker-compose logs -f video-wall > logs/video-wall.log
 ```
 
-## Performance Benchmarks
-
-| Grid | Resolution | CPU | Memory | Typical FPS |
-|------|-----------|-----|--------|------------|
-| 1x1  | 1080p     | 20% | 400MB  | 30         |
-| 2x2  | 1080p     | 60% | 800MB  | 25         |
-| 3x3  | 1080p     | >90%| 1.5GB  | 15         |
-| 2x2  | 4K        | 85% | 1.2GB  | 20         |
-
-## Future Enhancements
-- [ ] RTMP output support
-- [ ] HTTP streaming endpoint
-- [ ] Motion detection alerts
-- [ ] Recording capability
-- [ ] Web-based control interface
-- [ ] Multi-monitor support
-- [ ] Custom layout configuration
-- [ ] Stream health monitoring dashboard
-
 ## License
 MIT License
-
-## Support
-For issues, bugs, or feature requests, please refer to project documentation.
-
-## Contributing
-Contributions are welcome! Please ensure code follows PEP 8 standards and include tests.

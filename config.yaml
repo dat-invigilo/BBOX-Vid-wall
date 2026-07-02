@@ -27,6 +27,13 @@ performance:
   max_fps: 30     # Maximum FPS for display
   reconnect_delay: 2  # Seconds to wait before reconnecting failed streams
 
+# mediamtx - RTSP relay that re-serves cameras as HLS for the browser.
+# These must match mediamtx.yml / docker-compose.yml's mediamtx service.
+mediamtx:
+  api_url: 'http://127.0.0.1:9997'
+  rtsp_port: 8554
+  hls_port: 8888
+
 # Save Mode - Video Recording
 save_mode:
   enabled: false

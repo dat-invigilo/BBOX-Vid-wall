@@ -54,3 +54,30 @@ services:
       - ALL
     cap_add:
       - NET_BIND_SERVICE
+
+  mediamtx:
+    image: bluenviron/mediamtx:1.9.3-ffmpeg
+    container_name: bbox-mediamtx
+
+    # Host network so it can reach camera/DeepStream RTSP sources directly,
+    # and so video-wall reaches it via 127.0.0.1 (same pattern as video-wall itself)
+    network_mode: host
+
+    volumes:
+      # mediamtx rewrites this file as paths are added/removed via its API
+      - ./mediamtx.yml:/mediamtx.yml:rw
+      # Dev mode: mediamtx's runOnDemand ffmpeg hooks loop these into RTSP
+      - ./test_videos:/app/test_videos:ro
+
+    restart: unless-stopped
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE

@@ -18,9 +18,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application files
-COPY app.py .
 COPY video_wall.py .
-COPY ffmpeg_stream_handler.py .
+COPY mediamtx_client.py .
 COPY web_server.py .
 COPY video_recorder.py .
 COPY ffmpeg_recorder.py .

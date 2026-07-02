@@ -1,238 +1,114 @@
 """
-Video Wall Display - Displays multiple RTSP streams in a grid layout using FFmpeg
+Video Wall Path Manager - Keeps mediamtx's RTSP->HLS relay paths in sync with
+the configured camera list. Does not decode, composite, or serve any video
+itself - the browser plays HLS directly from mediamtx, and this class just
+tells mediamtx which upstream URL each path should pull from.
 """
-import numpy as np
-import threading
-from typing import List, Dict, Optional
+import re
+from typing import List, Dict
 import logging
-import traceback
-from ffmpeg_stream_handler import FFmpegStreamHandler
-from PIL import Image, ImageDraw, ImageFont
+from mediamtx_client import MediamtxClient
 
 logger = logging.getLogger(__name__)
 
+_SAFE_NAME_RE = re.compile(r'[^a-zA-Z0-9_]')
+
+
+def _sanitize(value: str) -> str:
+    """mediamtx path names must be safe URL segments"""
+    return _SAFE_NAME_RE.sub('', str(value)) or 'x'
+
 
 class VideoWallDisplay:
-    """Manages the video wall display with multiple streams"""
-    
-    def __init__(self, streams: List[str], cols: int = 2, rows: int = 2, 
-                 output_width: int = 1920, output_height: int = 1080):
-        """
-        Initialize video wall display
-        
-        Args:
-            streams: List of RTSP URLs
-            cols: Number of columns in the grid
-            rows: Number of rows in the grid
-            output_width: Output video width
-            output_height: Output video height
-        """
-        self.streams = streams
-        self.cols = cols
-        self.rows = rows
-        self.output_width = output_width
-        self.output_height = output_height
-        self.total_cells = cols * rows
-        
-        # Pad streams list if needed
-        while len(self.streams) < self.total_cells:
-            self.streams.append(None)
-        
-        # Trim if too many streams
-        self.streams = self.streams[:self.total_cells]
-        
-        # Calculate cell dimensions
-        # Logic: Fixed cell size based on a 3x4 grid relative to the output dimensions
-        # This ensures that even with 1 row or 100 rows, each stream is the same size.
-        self.cell_width = output_width // 3
-        self.cell_height = output_height // 4
-        
-        # Override output_width/height to accommodate all rows/cols at this fixed size
-        self.output_width = self.cell_width * cols
-        self.output_height = self.cell_height * rows
-        
-        # Initialize stream handlers using FFmpeg
-        self.handlers: Dict[int, Optional[FFmpegStreamHandler]] = {}
-        for i, stream_url in enumerate(self.streams):
-            if stream_url:
-                self.handlers[i] = FFmpegStreamHandler(stream_url, i)
-            else:
-                self.handlers[i] = None
-        
-        logger.info(f"VideoWall initialized: {cols}x{rows} grid, "
-                   f"{output_width}x{output_height} output, {len([s for s in streams if s])} streams")
-    
-    def start(self):
-        """Start all stream handlers"""
-        try:
-            logger.info(f"Starting {len(self.handlers)} stream handlers")
-            started_count = 0
-            for i, handler in self.handlers.items():
-                if handler:
-                    logger.info(f"Starting handler {i} for stream: {self.streams[i]}")
-                    handler.start()
-                    started_count += 1
-                    logger.info(f"Handler {i} started successfully")
-                else:
-                    logger.debug(f"Handler {i} is None (empty cell)")
-            logger.info(f"All {started_count} streams started successfully")
-        except Exception as e:
-            logger.error(f"Error starting streams: {str(e)}")
-            logger.error(f"Traceback:\n{traceback.format_exc()}")
-            raise
-    
-    def stop(self):
-        """Stop all stream handlers"""
-        for handler in self.handlers.values():
-            if handler:
-                handler.stop()
-        logger.info("All streams stopped")
-    
-    def _create_placeholder(self, width: int, height: int, text: str) -> np.ndarray:
-        """Create a placeholder image for empty or missing streams using PIL"""
-        # Create numpy array with dark gray background
-        placeholder = np.zeros((height, width, 3), dtype=np.uint8)
-        placeholder[:] = (50, 50, 50)  # Dark gray background
-        
-        # Convert to PIL Image (RGB)
-        pil_image = Image.fromarray(placeholder[:, :, ::-1])  # BGR to RGB
-        draw = ImageDraw.Draw(pil_image)
-        
-        # Add text using PIL
-        try:
-            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 24)
-        except:
-            font = ImageFont.load_default()
-        
-        # Get text bounding box to center it
-        bbox = draw.textbbox((0, 0), text, font=font)
-        text_width = bbox[2] - bbox[0]
-        text_height = bbox[3] - bbox[1]
-        
-        text_x = (width - text_width) // 2
-        text_y = (height - text_height) // 2
-        
-        draw.text((text_x, text_y), text, font=font, fill=(200, 200, 200))
-        
-        # Convert back to numpy array (BGR)
-        return np.array(pil_image)[:, :, ::-1]
-    
-    def _resize_frame(self, frame: Optional[np.ndarray], width: int, 
-                     height: int, cell_index: int, stream_state: str = None) -> np.ndarray:
-        """Resize frame to fit cell while maintaining aspect ratio"""
-        # Check stream state first - prioritize placeholders until fully connected
-        if stream_state == "connecting" or stream_state is None:
-            return self._create_placeholder(width, height, "⏳ Loading...")
-        elif stream_state == "failed":
-            return self._create_placeholder(width, height, "Unable to connect")
-        
-        # If we are "connected" but have no frame yet, still show loading
-        if frame is None:
-            return self._create_placeholder(width, height, "⏳ Loading...")
-        
-        try:
-            # Calculate aspect ratio
-            frame_height, frame_width = frame.shape[:2]
-            frame_aspect = frame_width / frame_height
-            cell_aspect = width / height
-            
-            # Resize to fit
-            if frame_aspect > cell_aspect:
-                # Frame is wider
-                new_width = width
-                new_height = int(width / frame_aspect)
-            else:
-                # Frame is taller
-                new_height = height
-                new_width = int(height * frame_aspect)
-            
-            resized_pil = Image.fromarray(frame[:, :, ::-1])  # BGR to RGB
-            resized_pil = resized_pil.resize((new_width, new_height), Image.Resampling.LANCZOS)
-            resized = np.array(resized_pil)[:, :, ::-1]  # RGB to BGR
-            
-            # Create output frame with padding
-            output = np.zeros((height, width, 3), dtype=np.uint8)
-            y_offset = (height - new_height) // 2
-            x_offset = (width - new_width) // 2
-            output[y_offset:y_offset + new_height, x_offset:x_offset + new_width] = resized
-            
-            return output
-        except Exception as e:
-            logger.error(f"Error resizing frame for cell {cell_index}: {str(e)}")
-            return self._create_placeholder(width, height, f"Error - Cell {cell_index}")
-    
-    def get_wall_frame(self) -> np.ndarray:
-        """Generate the composite video wall frame"""
-        wall = np.zeros((self.output_height, self.output_width, 3), dtype=np.uint8)
-        
-        for idx in range(self.total_cells):
-            row = idx // self.cols
-            col = idx % self.cols
-            
-            y_start = row * self.cell_height
-            x_start = col * self.cell_width
-            
-            # Get frame and state from handler
-            handler = self.handlers.get(idx)
-            if handler:
-                frame = handler.get_frame()
-                stream_state = handler.stream_state
-            else:
-                frame = None
-                stream_state = None
-            
-            # Resize and place frame
-            cell_frame = self._resize_frame(frame, self.cell_width, 
-                                           self.cell_height, idx, stream_state)
-            wall[y_start:y_start + self.cell_height, 
-                 x_start:x_start + self.cell_width] = cell_frame
-            
-            # Add grid lines (draw rectangle using numpy)
-            thickness = 2
-            color = (200, 200, 200)
-            x_end = x_start + self.cell_width
-            y_end = y_start + self.cell_height
-            
-            # Draw top and bottom lines
-            wall[y_start:y_start + thickness, x_start:x_end] = color
-            wall[y_end - thickness:y_end, x_start:x_end] = color
-            
-            # Draw left and right lines
-            wall[y_start:y_end, x_start:x_start + thickness] = color
-            wall[y_start:y_end, x_end - thickness:x_end] = color
-        
-        return wall
-    
-    def get_cell_dimensions(self) -> tuple:
-        """Get (cell_width, cell_height)"""
-        return (self.cell_width, self.cell_height)
-    
-    def get_output_dimensions(self) -> tuple:
-        """Get (output_width, output_height)"""
-        return (self.output_width, self.output_height)
+    """Maps camera identities to mediamtx path names and keeps mediamtx's
+    path configuration in sync via its REST API"""
 
-    def update_stream(self, index: int, new_url: str):
-        """Update a specific stream URL and restart its handler"""
-        if index < 0 or index >= self.total_cells:
-            logger.warning(f"Invalid stream index: {index}")
-            return False
-        
-        logger.info(f"Updating stream {index} to: {new_url}")
-        
-        # Stop old handler if exists
-        old_handler = self.handlers.get(index)
-        if old_handler:
-            old_handler.stop()
-        
-        # Update URL and create new handler
-        self.streams[index] = new_url
-        if new_url:
-            new_handler = FFmpegStreamHandler(new_url, index)
-            self.handlers[index] = new_handler
-            new_handler.start()
-            logger.info(f"Stream {index} updated and restarted")
-        else:
-            self.handlers[index] = None
-            logger.info(f"Stream {index} cleared")
-            
-        return True
+    def __init__(self, client: MediamtxClient, rtsp_port: int = 8554):
+        self.client = client
+        self.rtsp_port = rtsp_port
+        self._known_paths: Dict[str, dict] = {}  # path_name -> last-pushed config
+
+    @staticmethod
+    def path_name(source_id: str, variant: str) -> str:
+        """variant: 'src' or 'bbox', e.g. cam223_src / cam223_bbox"""
+        return f"cam{_sanitize(source_id)}_{variant}"
+
+    @staticmethod
+    def dev_path_name(index: int) -> str:
+        return f"dev{index}"
+
+    def sync_cameras(self, streams_info: List[dict]) -> List[dict]:
+        """
+        streams_info: output of parse_deepstream_uris() (or the manual-URL
+        fallback list built from config.yaml's `streams`), each entry shaped
+        like {'source': uri, 'source_id': str, 'bbox': uri (optional)}.
+
+        Ensures a mediamtx path exists for each source (and bbox, if present).
+        Returns the per-cell info the frontend needs to build its video grid.
+        """
+        cells = []
+        for i, info in enumerate(streams_info):
+            source_id = str(info.get('source_id', i))
+
+            path_src = self.path_name(source_id, 'src')
+            self._ensure_path(path_src, {
+                'source': info['source'],
+                'sourceOnDemand': True,
+                'sourceOnDemandCloseAfter': '30s',
+            })
+
+            path_bbox = None
+            if info.get('bbox'):
+                path_bbox = self.path_name(source_id, 'bbox')
+                self._ensure_path(path_bbox, {
+                    'source': info['bbox'],
+                    'sourceOnDemand': True,
+                    'sourceOnDemandCloseAfter': '30s',
+                })
+
+            cells.append({
+                'index': i,
+                'source_id': source_id,
+                'path_source': path_src,
+                'path_bbox': path_bbox,
+                'has_bbox': path_bbox is not None,
+            })
+        return cells
+
+    def sync_dev_videos(self, test_vids: List[str]) -> List[dict]:
+        """
+        dev_mode: mediamtx can't pull a raw local file the way it pulls RTSP,
+        so each dev path runs an ffmpeg loop (via the mediamtx -ffmpeg image)
+        that re-publishes the local file as RTSP back into mediamtx itself.
+        """
+        cells = []
+        for i, file_path in enumerate(test_vids):
+            name = self.dev_path_name(i)
+            cmd = (
+                f'ffmpeg -re -stream_loop -1 -i "{file_path}" '
+                f'-c copy -f rtsp rtsp://127.0.0.1:{self.rtsp_port}/$MTX_PATH'
+            )
+            self._ensure_path(name, {
+                'runOnDemand': cmd,
+                'runOnDemandRestart': True,
+                'runOnDemandCloseAfter': '30s',
+            })
+            cells.append({
+                'index': i,
+                'source_id': str(i),
+                'path_source': name,
+                'path_bbox': None,
+                'has_bbox': False,
+            })
+        return cells
+
+    def _ensure_path(self, name: str, desired: dict):
+        """Only calls mediamtx's API if this path's config actually changed
+        since the last sync, to avoid redundant round-trips on every poll"""
+        if self._known_paths.get(name) == desired:
+            return
+        try:
+            self.client.upsert_path(name, desired)
+            self._known_paths[name] = desired
+        except Exception as e:
+            logger.error(f"mediamtx: failed to provision path '{name}': {e}")

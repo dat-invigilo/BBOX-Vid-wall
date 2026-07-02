@@ -1,0 +1,38 @@
+###############################################
+# mediamtx configuration - Video Wall RTSP relay
+#
+# Paths are provisioned dynamically at runtime via the API (see
+# mediamtx_client.py / video_wall.py) - this file intentionally does not
+# list any cameras. mediamtx rewrites the `paths:` section of this file
+# on disk as paths are added/removed via the API; treat it as runtime
+# state after first deploy, not a hand-maintained file.
+###############################################
+
+logLevel: info
+
+# Control API - used by web_server.py to create/update relay paths.
+# Loopback only: this API has no auth and allows arbitrary reconfiguration.
+api: yes
+apiAddress: 127.0.0.1:9997
+
+# RTSP - source connections to cameras/DeepStream sinks, and the
+# recorder (ffmpeg_recorder.py) reads back from here instead of the
+# original camera to avoid opening a second upstream connection.
+rtsp: yes
+rtspAddress: :8554
+protocols: [tcp]
+
+# HLS - what the browser actually plays via hls.js.
+hls: yes
+hlsAddress: :8888
+hlsAllowOrigin: '*'
+hlsVariant: mpegts
+hlsSegmentCount: 7
+hlsSegmentDuration: 1s
+
+# Not used by this app - keep disabled to reduce surface area.
+webrtc: no
+rtmp: no
+srt: no
+
+paths: {}
