@@ -234,6 +234,48 @@
         let statusCheckInterval = null;
         let heartbeatInterval = null;
         let lastCells = [];  // most recent /api/streams `cells` array, indexed by cell index
+        let lastRenderedKey = null;  // dedupes renderGrid() rebuilds when nothing changed
+
+        // --- Per-browser local state (localStorage) -----------------------
+        // "Wall running" and "which streams are hidden" are per-viewer
+        // concerns, not shared server state: mediamtx already provisions
+        // every camera's path unconditionally and on-demand sourcing means
+        // an unwatched path costs nothing, so nothing server-side needs to
+        // track this. Every browser keeps its own copy so one user's
+        // Stop/selection never affects anyone else's view.
+        const LS_WALL_STARTED = 'bboxVidWall.wallStarted';
+        const LS_HIDDEN_INDICES = 'bboxVidWall.hiddenIndices';
+
+        function isWallStarted() {
+            return localStorage.getItem(LS_WALL_STARTED) === '1';
+        }
+
+        function setWallStarted(started) {
+            localStorage.setItem(LS_WALL_STARTED, started ? '1' : '0');
+        }
+
+        function getHiddenIndices() {
+            try {
+                const raw = localStorage.getItem(LS_HIDDEN_INDICES);
+                return raw ? new Set(JSON.parse(raw)) : new Set();
+            } catch (e) {
+                return new Set();
+            }
+        }
+
+        function setHiddenIndices(hidden) {
+            localStorage.setItem(LS_HIDDEN_INDICES, JSON.stringify(Array.from(hidden)));
+        }
+
+        function isIndexSelected(index) {
+            return !getHiddenIndices().has(index);
+        }
+
+        function setIndexSelected(index, selected) {
+            const hidden = getHiddenIndices();
+            if (selected) hidden.delete(index); else hidden.add(index);
+            setHiddenIndices(hidden);
+        }
 
         function hlsUrlFor(pathName, hlsPort) {
             const port = hlsPort || 8888;
@@ -326,141 +368,164 @@
         });
 
         function updateStatus() {
+            // Only used for genuinely server-wide info now - dev_mode is a
+            // shared config toggle. "Running" and grid contents are local,
+            // per-browser state (see isWallStarted()/renderGrid()) since
+            // this app is viewed by multiple independent browsers against
+            // one server and must not affect each other.
             fetch(`${API_BASE}/api/status`)
                 .then(r => r.json())
                 .then(data => {
-                    const statusDot = document.getElementById('statusDot');
-                    const statusText = document.getElementById('statusText');
-                    const placeholder = document.getElementById('placeholder');
-                    const videoGrid = document.getElementById('videoGrid');
-
-                    if (data.running) {
-                        statusDot.classList.add('running');
-                        statusText.textContent = 'Running';
-                        placeholder.style.display = 'none';
-                        videoGrid.style.display = 'grid';
-                        document.getElementById('startBtn').disabled = true;
-                        document.getElementById('stopBtn').disabled = false;
-                        document.getElementById('stopBtn').textContent = 'Stop';
-                        document.getElementById('restartBtn').disabled = false;
-                        document.getElementById('restartBtn').textContent = '⟳ Restart';
-
-                        // Logic for streams overlay (kebab menus)
-                        const overlay = document.getElementById('streamsOverlay');
-                        const streamsCount = data.streams || 0;
-                        const cols = data.cols || 2;
-                        const rows = data.rows || 1;
-
-                        // Only recreate if count or dimensions change
-                        if (overlay.children.length !== streamsCount) {
-                            if (overlay.dataset.isFetching === "true") return;
-                            overlay.dataset.isFetching = "true";
-
-                            // Check current bbox_toggles from sync call
-                            fetch(`${API_BASE}/api/streams?dev_mode=${data.dev_mode}`)
-                                .then(r => r.json())
-                                .then(streamData => {
-                                    overlay.innerHTML = '';
-                                    overlay.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
-                                    overlay.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
-                                    // Ensure exact height match for the overlay
-                                    overlay.style.aspectRatio = `${cols}/${rows}`;
-
-                                    // Build the HLS video grid, pixel-aligned with the control overlay above
-                                    lastCells = streamData.cells || [];
-                                    videoGrid.querySelectorAll('video').forEach(v => {
-                                        if (v._hls) v._hls.destroy();
-                                    });
-                                    videoGrid.innerHTML = '';
-                                    videoGrid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
-                                    videoGrid.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
-                                    videoGrid.style.aspectRatio = `${cols}/${rows}`;
-
-                                    const bbox_toggles = streamData.bbox_toggles || {};
-                                    lastCells.forEach(cell => {
-                                        const is_bbox = (bbox_toggles[cell.index] || bbox_toggles[String(cell.index)] || false) && cell.has_bbox;
-                                        const pathName = is_bbox ? cell.path_bbox : cell.path_source;
-                                        const video = document.createElement('video');
-                                        video.id = `cellVideo_${cell.index}`;
-                                        video.muted = true;
-                                        video.autoplay = true;
-                                        video.playsInline = true;
-                                        videoGrid.appendChild(video);
-                                        attachHls(video, hlsUrlFor(pathName, streamData.hls_port));
-                                        video._currentPath = pathName;
-                                    });
-
-                                    for (let i = 0; i < streamsCount; i++) {
-                                        const is_bbox = bbox_toggles[i] || (bbox_toggles[String(i)] || false);
-                                        // Check if sidebar has a playing toggle for this stream
-                                        const sidebarPlaying = document.getElementById(`playing_check_${i}`);
-                                        const is_playing = sidebarPlaying ? sidebarPlaying.checked : true;
-                                        const cell = document.createElement('div');
-                                        cell.className = 'stream-cell-controls';
-                                        cell.innerHTML = `
-                                        <div class="kebab-menu" onclick="toggleKebab(event, ${i})">
-                                            <span></span><span></span><span></span>
-                                        </div>
-                                        <div id="dropdown_${i}" class="dropdown-menu">
-                                            <div class="dropdown-item">
-                                                <input type="checkbox" id="playing_check_overlay_${i}" ${is_playing ? 'checked' : ''} onchange="onPlayingOverlayToggle(${i}, this.checked)">
-                                                <label for="playing_check_overlay_${i}">PLAYING</label>
-                                            </div>
-                                            <div class="dropdown-item">
-                                                <input type="checkbox" id="bbox_check_overlay_${i}" ${is_bbox ? 'checked' : ''} onchange="onPerStreamBboxToggle(${i}, this.checked)">
-                                                <label for="bbox_check_overlay_${i}">BBOX MODE</label>
-                                            </div>
-                                            <div class="dropdown-divider"></div>
-                                            <div class="dropdown-item">
-                                                <input type="checkbox" id="record_bbox_check_${i}" onchange="onManualRecordToggle(${i}, 'bbox', this.checked)">
-                                                <label for="record_bbox_check_${i}">RECORD (W/ BBOX)</label>
-                                            </div>
-                                            <div class="dropdown-item">
-                                                <input type="checkbox" id="record_source_check_${i}" onchange="onManualRecordToggle(${i}, 'source', this.checked)">
-                                                <label for="record_source_check_${i}">RECORD (W/O BBOX)</label>
-                                            </div>
-                                            <div class="dropdown-divider"></div>
-                                            <div class="dropdown-item clickable" onclick="toggleFullscreen(${i})">
-                                                <span class="icon">⛶</span>
-                                                <span>FULLSCREEN</span>
-                                            </div>
-                                        </div>
-                                    `;
-                                        overlay.appendChild(cell);
-                                    }
-                                })
-                                .finally(() => {
-                                    overlay.dataset.isFetching = "false";
-                                });
-                        }
-                    } else {
-                        statusDot.classList.remove('running');
-                        statusText.textContent = 'Stopped';
-                        placeholder.style.display = 'block';
-                        videoGrid.style.display = 'none';
-                        document.getElementById('startBtn').disabled = false;
-                        document.getElementById('stopBtn').disabled = true;
-                        document.getElementById('stopBtn').textContent = 'Stop';
-                        document.getElementById('restartBtn').disabled = true;
-                        document.getElementById('restartBtn').textContent = '⟳ Restart';
-
-                        // Clear overlay and video grid when stopped
-                        document.getElementById('streamsOverlay').innerHTML = '';
-                        videoGrid.querySelectorAll('video').forEach(v => {
-                            if (v._hls) v._hls.destroy();
-                        });
-                        videoGrid.innerHTML = '';
-                    }
-
-                    if (data.running) {
-                        document.getElementById('infoStreams').textContent = data.streams || 0;
-                        document.getElementById('infoGrid').textContent = `${data.cols}×${data.rows}`;
-                        document.getElementById('infoRes').textContent = `${data.width}×${data.height}`;
-                    }
-
                     document.getElementById('infoMode').textContent = data.dev_mode ? 'DEV' : 'RTSP';
                 })
                 .catch(e => console.error('Status check failed:', e));
+        }
+
+        function applyRunningUI(running) {
+            const statusDot = document.getElementById('statusDot');
+            const statusText = document.getElementById('statusText');
+            const placeholder = document.getElementById('placeholder');
+            const videoGrid = document.getElementById('videoGrid');
+
+            if (running) {
+                statusDot.classList.add('running');
+                statusText.textContent = 'Running';
+                document.getElementById('startBtn').disabled = true;
+                document.getElementById('stopBtn').disabled = false;
+                document.getElementById('stopBtn').textContent = 'Stop';
+                document.getElementById('restartBtn').disabled = false;
+                document.getElementById('restartBtn').textContent = '⟳ Restart';
+            } else {
+                statusDot.classList.remove('running');
+                statusText.textContent = 'Stopped';
+                placeholder.style.display = 'block';
+                videoGrid.style.display = 'none';
+                document.getElementById('startBtn').disabled = false;
+                document.getElementById('stopBtn').disabled = true;
+                document.getElementById('stopBtn').textContent = 'Stop';
+                document.getElementById('restartBtn').disabled = true;
+                document.getElementById('restartBtn').textContent = '⟳ Restart';
+
+                // Tear down this browser's players only.
+                document.getElementById('streamsOverlay').innerHTML = '';
+                videoGrid.querySelectorAll('video').forEach(v => {
+                    if (v._hls) v._hls.destroy();
+                });
+                videoGrid.innerHTML = '';
+                lastRenderedKey = null;
+            }
+        }
+
+        function computeGridDims(count) {
+            // Prefer the user-configured cols/rows, unless it's the default
+            // 2x2 auto value - matches the auto-adjust heuristic startWall()
+            // already used when first sizing the grid.
+            let cols = parseInt(document.getElementById('cols').value) || 2;
+            let rows = parseInt(document.getElementById('rows').value) || 2;
+            if (cols === 2 && rows === 2 && count !== 4) {
+                cols = 2;
+                rows = Math.max(1, Math.ceil(count / cols));
+            }
+            return { cols, rows };
+        }
+
+        function renderGrid() {
+            // Rebuilds this browser's video grid from the current camera
+            // list, filtered to only the streams this browser hasn't hidden
+            // via the "Playing" checkboxes. No server round trip beyond
+            // fetching the (always-available) camera list - selection is
+            // applied entirely client-side.
+            if (!isWallStarted()) return;
+
+            const devMode = document.getElementById('devMode').checked;
+            fetch(`${API_BASE}/api/streams?dev_mode=${devMode}`)
+                .then(r => r.json())
+                .then(streamData => {
+                    lastCells = streamData.cells || [];
+                    const bbox_toggles = streamData.bbox_toggles || {};
+                    const selectedCells = lastCells.filter(cell => isIndexSelected(cell.index));
+                    const pathFor = (cell) => {
+                        const is_bbox = (bbox_toggles[cell.index] || bbox_toggles[String(cell.index)] || false) && cell.has_bbox;
+                        return is_bbox ? cell.path_bbox : cell.path_source;
+                    };
+
+                    const { cols, rows } = computeGridDims(selectedCells.length);
+                    const renderKey = JSON.stringify({ cols, rows, paths: selectedCells.map(pathFor) });
+                    if (renderKey === lastRenderedKey) return; // nothing actually changed
+                    lastRenderedKey = renderKey;
+
+                    const placeholder = document.getElementById('placeholder');
+                    const videoGrid = document.getElementById('videoGrid');
+                    const overlay = document.getElementById('streamsOverlay');
+
+                    placeholder.style.display = 'none';
+                    videoGrid.style.display = 'grid';
+
+                    overlay.innerHTML = '';
+                    overlay.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+                    overlay.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+                    overlay.style.aspectRatio = `${cols}/${rows}`;
+
+                    videoGrid.querySelectorAll('video').forEach(v => {
+                        if (v._hls) v._hls.destroy();
+                    });
+                    videoGrid.innerHTML = '';
+                    videoGrid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+                    videoGrid.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+                    videoGrid.style.aspectRatio = `${cols}/${rows}`;
+
+                    selectedCells.forEach(cell => {
+                        const is_bbox = (bbox_toggles[cell.index] || bbox_toggles[String(cell.index)] || false) && cell.has_bbox;
+                        const pathName = pathFor(cell);
+                        const video = document.createElement('video');
+                        video.id = `cellVideo_${cell.index}`;
+                        video.muted = true;
+                        video.autoplay = true;
+                        video.playsInline = true;
+                        videoGrid.appendChild(video);
+                        attachHls(video, hlsUrlFor(pathName, streamData.hls_port));
+                        video._currentPath = pathName;
+
+                        const kebabCell = document.createElement('div');
+                        kebabCell.className = 'stream-cell-controls';
+                        kebabCell.innerHTML = `
+                        <div class="kebab-menu" onclick="toggleKebab(event, ${cell.index})">
+                            <span></span><span></span><span></span>
+                        </div>
+                        <div id="dropdown_${cell.index}" class="dropdown-menu">
+                            <div class="dropdown-item">
+                                <input type="checkbox" id="playing_check_overlay_${cell.index}" checked onchange="onPlayingOverlayToggle(${cell.index}, this.checked)">
+                                <label for="playing_check_overlay_${cell.index}">PLAYING</label>
+                            </div>
+                            <div class="dropdown-item">
+                                <input type="checkbox" id="bbox_check_overlay_${cell.index}" ${is_bbox ? 'checked' : ''} onchange="onPerStreamBboxToggle(${cell.index}, this.checked)">
+                                <label for="bbox_check_overlay_${cell.index}">BBOX MODE</label>
+                            </div>
+                            <div class="dropdown-divider"></div>
+                            <div class="dropdown-item">
+                                <input type="checkbox" id="record_bbox_check_${cell.index}" onchange="onManualRecordToggle(${cell.index}, 'bbox', this.checked)">
+                                <label for="record_bbox_check_${cell.index}">RECORD (W/ BBOX)</label>
+                            </div>
+                            <div class="dropdown-item">
+                                <input type="checkbox" id="record_source_check_${cell.index}" onchange="onManualRecordToggle(${cell.index}, 'source', this.checked)">
+                                <label for="record_source_check_${cell.index}">RECORD (W/O BBOX)</label>
+                            </div>
+                            <div class="dropdown-divider"></div>
+                            <div class="dropdown-item clickable" onclick="toggleFullscreen(${cell.index})">
+                                <span class="icon">⛶</span>
+                                <span>FULLSCREEN</span>
+                            </div>
+                        </div>
+                    `;
+                        overlay.appendChild(kebabCell);
+                    });
+
+                    document.getElementById('infoStreams').textContent = selectedCells.length;
+                    document.getElementById('infoGrid').textContent = `${cols}×${rows}`;
+                    const [w, h] = document.getElementById('resolution').value.split('x');
+                    document.getElementById('infoRes').textContent = `${w}×${h}`;
+                })
+                .catch(e => console.error('renderGrid failed:', e));
         }
 
         function getPlayingStreams() {
@@ -503,7 +568,6 @@
             let cols = parseInt(document.getElementById('cols').value);
             let rows = parseInt(document.getElementById('rows').value);
             const resolution = document.getElementById('resolution').value;
-            const devMode = document.getElementById('devMode').checked;
 
             let streams = getPlayingStreams();
 
@@ -524,129 +588,54 @@
 
             const [width, height] = resolution.split('x').map(Number);
 
-            // Show loading message and update placeholder
             showMessage('Loading streams...', 'info');
             const placeholder = document.getElementById('placeholder');
             placeholder.innerHTML = '<div class="placeholder-icon">⏳</div><div>Connecting to streams...</div>';
             placeholder.style.display = 'block';
 
-            console.log('[startWall] Calling /api/start with:', { streams: streams.length, cols, rows, width, height });
-
+            // Tells the backend to provision mediamtx paths (idempotent,
+            // safe regardless of other browsers) - not waited on for this
+            // browser's own UI, which is driven entirely by local state.
             fetch(`${API_BASE}/api/start`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ streams, cols, rows, width, height })
-            })
-                .then(r => {
-                    console.log('[startWall] API response status:', r.status);
-                    return r.json();
-                })
-                .then(data => {
-                    console.log('[startWall] API response data:', data);
-                    if (data.status === 'started') {
-                        showMessage('Video wall started!', 'success');
+            }).catch(e => console.error('[startWall] /api/start failed (continuing locally):', e));
 
-                        // Immediately show the video grid without waiting for status check
-                        // (updateStatus() below will populate it with per-cell HLS players)
-                        console.log('[startWall] Showing video grid immediately');
-                        const videoGrid = document.getElementById('videoGrid');
-                        const statusDot = document.getElementById('statusDot');
-                        const statusText = document.getElementById('statusText');
-
-                        placeholder.style.display = 'none';
-                        videoGrid.style.display = 'grid';
-                        statusDot.classList.add('running');
-                        statusText.textContent = 'Running';
-                        document.getElementById('startBtn').disabled = true;
-                        document.getElementById('stopBtn').disabled = false;
-                        document.getElementById('restartBtn').disabled = false;
-
-                        // Also call updateStatus to get complete info
-                        updateStatus();
-                    } else {
-                        console.error('[startWall] Start failed:', data.error);
-                        showMessage(data.error || 'Failed to start', 'error');
-                    }
-                })
-                .catch(e => {
-                    console.error('[startWall] Error:', e);
-                    showMessage(`Error: ${e.message}`, 'error');
-                });
+            setWallStarted(true);
+            applyRunningUI(true);
+            showMessage('Video wall started!', 'success');
+            renderGrid();
         }
 
         function stopWall() {
-            const stopBtn = document.getElementById('stopBtn');
-            const videoGrid = document.getElementById('videoGrid');
-            const placeholder = document.getElementById('placeholder');
-
-            stopBtn.disabled = true;
-            stopBtn.textContent = 'Stopping...';
-            document.getElementById('restartBtn').disabled = true;
-
-            // Immediately tear down HLS players to break the browser connections
-            videoGrid.querySelectorAll('video').forEach(v => {
-                if (v._hls) v._hls.destroy();
-            });
-            videoGrid.innerHTML = '';
-            videoGrid.style.display = 'none';
-
-            fetch(`${API_BASE}/api/stop`, { method: 'POST' })
-                .then(r => r.json())
-                .then(() => {
-                    showMessage('Video wall stopped', 'info');
-                    placeholder.style.display = 'block';
-                    updateStatus();
-                })
-                .catch(e => {
-                    showMessage(`Error: ${e.message}`, 'error');
-                    stopBtn.textContent = 'Stop';
-                    stopBtn.disabled = false;
-                });
+            // Local only - stops THIS browser's playback. Other browsers
+            // viewing the same wall are unaffected; mediamtx paths stay
+            // provisioned (on-demand sourcing means an unwatched path costs
+            // nothing).
+            setWallStarted(false);
+            applyRunningUI(false);
+            showMessage('Video wall stopped', 'info');
         }
 
         function restartWall() {
             /**
-             * Restart the wall with only the streams whose "Playing" box is ticked.
-             * Stops the current wall first, waits for it to fully stop, then starts again.
+             * Force a full local rebuild of this browser's grid (e.g. to
+             * recover a stuck HLS player, or immediately pick up a stream
+             * selection change) - no server round trip, since selection is
+             * already applied live by renderGrid().
              */
             const restartBtn = document.getElementById('restartBtn');
-            const videoGrid = document.getElementById('videoGrid');
-            const placeholder = document.getElementById('placeholder');
-
             restartBtn.disabled = true;
             restartBtn.textContent = '⟳ Restarting...';
-            document.getElementById('stopBtn').disabled = true;
 
-            // Immediately tear down HLS players
-            videoGrid.querySelectorAll('video').forEach(v => {
-                if (v._hls) v._hls.destroy();
-            });
-            videoGrid.innerHTML = '';
-            videoGrid.style.display = 'none';
+            showMessage('Restarting your view with currently selected streams...', 'info');
 
-            showMessage('Restarting wall with selected streams...', 'info');
+            lastRenderedKey = null;
+            renderGrid();
 
-            fetch(`${API_BASE}/api/stop`, { method: 'POST' })
-                .then(r => r.json())
-                .then(() => {
-                    addLog('Wall stopped. Starting with playing streams...', 'info');
-                    placeholder.innerHTML = '<div class="placeholder-icon">⏳</div><div>Restarting with selected streams...</div>';
-                    placeholder.style.display = 'block';
-
-                    // Small delay to let backend fully release resources
-                    return new Promise(resolve => setTimeout(resolve, 1500));
-                })
-                .then(() => {
-                    // Now start with only the playing streams
-                    startWall();
-                    restartBtn.textContent = '⟳ Restart';
-                    // restartBtn will be re-enabled once startWall succeeds (via updateStatus)
-                })
-                .catch(e => {
-                    showMessage(`Restart error: ${e.message}`, 'error');
-                    restartBtn.textContent = '⟳ Restart';
-                    restartBtn.disabled = false;
-                });
+            restartBtn.textContent = '⟳ Restart';
+            restartBtn.disabled = false;
         }
 
         function reloadStreams() {
@@ -673,6 +662,7 @@
 
                         streams.forEach((stream, idx) => {
                             const is_bbox = bbox_toggles[idx] || false;
+                            const is_playing = isIndexSelected(idx);
                             // Use source_id from deepstream if available, otherwise fall back to index
                             const sourceId = source_ids[idx] || String(idx);
 
@@ -689,7 +679,7 @@
                                         ${idx + 1}. <span style="color: #ff9800; font-weight: bold;">CameraID: ${sourceId}</span>
                                     </div>
                                     <div class="checkbox-group" style="margin-left: 10px;">
-                                        <input type="checkbox" id="playing_check_${idx}" class="stream-playing-toggle" checked onchange="onPlayingToggleChanged(${idx})">
+                                        <input type="checkbox" id="playing_check_${idx}" class="stream-playing-toggle" ${is_playing ? 'checked' : ''} onchange="onPlayingToggleChanged(${idx})">
                                         <label for="playing_check_${idx}" style="font-size: 10px; color: #00ff41; margin-bottom: 0;">Playing</label>
                                     </div>
                                 </div>
@@ -801,7 +791,8 @@
         function onPlayingToggleChanged(index) {
             /**
              * Called when any "Playing" checkbox is toggled in the sidebar stream list.
-             * Syncs with the overlay kebab PLAYING toggle if present.
+             * Syncs with the overlay kebab PLAYING toggle if present, persists the
+             * selection locally, and live-updates this browser's grid.
              */
             if (index !== undefined) {
                 const sidebarCb = document.getElementById(`playing_check_${index}`);
@@ -809,6 +800,8 @@
                 if (sidebarCb && overlayCb) {
                     overlayCb.checked = sidebarCb.checked;
                 }
+                setIndexSelected(index, sidebarCb ? sidebarCb.checked : true);
+                renderGrid();
             }
             const toggles = document.querySelectorAll('.stream-playing-toggle');
             const playingCount = Array.from(toggles).filter(t => t.checked).length;
@@ -818,12 +811,15 @@
         function onPlayingOverlayToggle(index, checked) {
             /**
              * Called when the PLAYING checkbox in the kebab overlay menu is toggled.
-             * Syncs with the sidebar Playing toggle.
+             * Syncs with the sidebar Playing toggle, persists the selection locally,
+             * and live-updates this browser's grid.
              */
             const sidebarCb = document.getElementById(`playing_check_${index}`);
             if (sidebarCb) {
                 sidebarCb.checked = checked;
             }
+            setIndexSelected(index, checked);
+            renderGrid();
             const toggles = document.querySelectorAll('.stream-playing-toggle');
             const playingCount = Array.from(toggles).filter(t => t.checked).length;
             addLog(`Playing: ${playingCount}/${toggles.length} streams selected`, 'info');
@@ -1204,6 +1200,10 @@
 
         // Initialize
         window.addEventListener('load', () => {
+            // Restore this browser's own running/selection state immediately,
+            // independent of any other browser's session.
+            applyRunningUI(isWallStarted());
+
             // First load config
             fetch(`${API_BASE}/api/config`)
                 .then(r => r.json())
@@ -1216,14 +1216,20 @@
                     updateDevModeUI();
 
                     // After loading config, we have the initial toggles, but reloadStreams will fetch them again
-                    setTimeout(reloadStreams, 300);
+                    setTimeout(() => {
+                        reloadStreams();
+                        if (isWallStarted()) renderGrid();
+                    }, 300);
                 })
                 .catch(e => console.error('Error loading config:', e));
 
             // Status checks
             updateStatus();
             // Reduced frequency to 5 seconds to reduce backend log volume
-            statusCheckInterval = setInterval(updateStatus, 5000);
+            statusCheckInterval = setInterval(() => {
+                updateStatus();
+                if (isWallStarted()) renderGrid();
+            }, 5000);
 
             // Heartbeat: ping backend every 10s so it knows we're still here
             sendHeartbeat();

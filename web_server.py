@@ -752,29 +752,26 @@ def api_savemode_download():
 
 
 def _inactivity_watchdog():
-    """Background thread that auto-stops the wall if the frontend goes away.
+    """Background thread that auto-stops recording if every frontend goes away.
 
-    Runs every 15 seconds.  If the wall is running and no heartbeat has been
-    received for HEARTBEAT_TIMEOUT_SECONDS, it stops both the video wall and
-    any active recording to free resources.
+    Runs every 15 seconds. "Wall running" is now per-browser client-side
+    state (see templates/index.html), not something this process can gate
+    on, so this only tracks the one thing that's still a genuinely shared
+    resource: if no heartbeat has been received from *any* browser for
+    HEARTBEAT_TIMEOUT_SECONDS, stop active recording to free resources.
     """
     global last_heartbeat_time, recorder
     logger.info(f"Inactivity watchdog started (timeout={HEARTBEAT_TIMEOUT_SECONDS}s)")
     while True:
         time.sleep(15)
-        if not streamer.is_running:
-            continue
         if last_heartbeat_time == 0:
-            # No heartbeat ever received — wall was started before the first
-            # heartbeat arrived; give it a grace period.
+            # No browser has connected yet — nothing to time out.
             continue
         elapsed = time.time() - last_heartbeat_time
         if elapsed > HEARTBEAT_TIMEOUT_SECONDS:
             logger.warning(
-                f"No frontend heartbeat for {elapsed:.0f}s — auto-stopping video wall to save resources"
+                f"No frontend heartbeat for {elapsed:.0f}s — auto-stopping recording to save resources"
             )
-            streamer.stop()
-            # Also stop recordings if any
             if recorder and recorder.is_recording:
                 try:
                     recorder.stop_recording()
