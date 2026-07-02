@@ -81,20 +81,20 @@ class VideoWallDisplay:
         return cells
 
     def _bbox_remux_cmd(self, upstream_url: str) -> str:
-        """DeepStream's bbox/OSD RTSP sink occasionally emits a packet whose
-        DTS is greater than its PTS, which is invalid - mediamtx's fmp4 HLS
-        muxer rejects it and tears itself down each time it happens ("unable
-        to extract DTS: DTS is greater than PTS"). Pull the stream through a
-        local ffmpeg pass-through first and re-stamp packets from wall-clock
-        arrival time instead of trusting the source's own (occasionally
-        broken) timestamps. -c copy keeps this a cheap repacketize, not a
-        re-encode."""
+        """DeepStream's bbox/OSD RTSP sink doesn't reliably send SPS/PPS
+        (H264 parameter sets) to a freshly-connecting client - confirmed via
+        ffprobe against the sink directly ("non-existing PPS 0 referenced",
+        "decode_slice_header error", "no frame!" repeated before it finally
+        gets a usable frame). Until that's fixed upstream (DeepStream
+        encoder's insert-sps-pps setting), give ffmpeg a wide analyze/probe
+        window so it's likely to eventually land on a valid keyframe+PPS
+        instead of giving up early - this is a stopgap, not a fix for the
+        source. Also re-stamp packets from wall-clock arrival time instead
+        of trusting the source's own (sometimes invalid, DTS > PTS)
+        timestamps. -c copy keeps this a repacketize, not a re-encode."""
         return (
             f'ffmpeg -fflags +genpts -use_wallclock_as_timestamps 1 '
-            # Bound RTSP stream probing so ffmpeg starts publishing quickly
-            # (codec info already comes from the RTSP SETUP/SDP exchange -
-            # it doesn't need a long analyzeduration for a -c copy pass).
-            f'-analyzeduration 1000000 -probesize 32768 '
+            f'-analyzeduration 10000000 -probesize 5000000 '
             f'-rtsp_transport tcp -i "{upstream_url}" '
             f'-c copy -avoid_negative_ts make_zero '
             f'-f rtsp rtsp://127.0.0.1:{self.rtsp_port}/$MTX_PATH'
