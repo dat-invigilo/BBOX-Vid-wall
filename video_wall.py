@@ -55,20 +55,23 @@ class VideoWallDisplay:
                 'source': info['source'],
                 'sourceOnDemand': True,
                 'sourceOnDemandCloseAfter': '30s',
+                # mediamtx's global `protocols: [tcp]` only governs the
+                # transport it offers to readers, not the one it uses to
+                # pull from a source - by default it tries UDP first and
+                # only falls back to TCP after already losing packets
+                # ("no UDP packets received, switching to TCP" in the
+                # logs). Force TCP from the start to avoid that window.
+                'rtspTransport': 'tcp',
             })
 
             path_bbox = None
             if info.get('bbox'):
                 path_bbox = self.path_name(source_id, 'bbox')
                 self._ensure_path(path_bbox, {
-                    'runOnDemand': self._bbox_remux_cmd(info['bbox']),
-                    'runOnDemandRestart': True,
-                    'runOnDemandCloseAfter': '120s',
-                    # The extra ffmpeg hop needs time to connect to the
-                    # upstream RTSP source and probe it before it starts
-                    # publishing back into mediamtx - mediamtx's 10s default
-                    # was killing it before it got that far.
-                    'runOnDemandStartTimeout': '100s',
+                    'source': info['bbox'],
+                    'sourceOnDemand': True,
+                    'sourceOnDemandCloseAfter': '30s',
+                    'rtspTransport': 'tcp',
                 })
 
             cells.append({
@@ -79,26 +82,6 @@ class VideoWallDisplay:
                 'has_bbox': path_bbox is not None,
             })
         return cells
-
-    def _bbox_remux_cmd(self, upstream_url: str) -> str:
-        """DeepStream's bbox/OSD RTSP sink doesn't reliably send SPS/PPS
-        (H264 parameter sets) to a freshly-connecting client - confirmed via
-        ffprobe against the sink directly ("non-existing PPS 0 referenced",
-        "decode_slice_header error", "no frame!" repeated before it finally
-        gets a usable frame). Until that's fixed upstream (DeepStream
-        encoder's insert-sps-pps setting), give ffmpeg a wide analyze/probe
-        window so it's likely to eventually land on a valid keyframe+PPS
-        instead of giving up early - this is a stopgap, not a fix for the
-        source. Also re-stamp packets from wall-clock arrival time instead
-        of trusting the source's own (sometimes invalid, DTS > PTS)
-        timestamps. -c copy keeps this a repacketize, not a re-encode."""
-        return (
-            f'ffmpeg -fflags +genpts -use_wallclock_as_timestamps 1 '
-            f'-analyzeduration 10000000 -probesize 5000000 '
-            f'-rtsp_transport tcp -i "{upstream_url}" '
-            f'-c copy -avoid_negative_ts make_zero '
-            f'-f rtsp rtsp://127.0.0.1:{self.rtsp_port}/$MTX_PATH'
-        )
 
     def sync_dev_videos(self, test_vids: List[str]) -> List[dict]:
         """
