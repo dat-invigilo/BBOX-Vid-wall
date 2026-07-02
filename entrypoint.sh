@@ -1,33 +1,25 @@
 #!/bin/bash
 set -e
 
-# Video Wall Container Entrypoint Script
+# Runs mediamtx (RTSP->HLS relay) and the Flask web server as sibling
+# processes in the same container, since they always deploy together on
+# the same host network (see mediamtx-migration.md). If either exits, the
+# container exits so the orchestrator (docker/IoT Edge) can restart it.
 
-echo "======================================="
-echo "Video Wall Container Starting..."
-echo "======================================="
+cleanup() {
+    echo "Shutting down..."
+    kill -TERM "$MEDIAMTX_PID" "$WEBSERVER_PID" 2>/dev/null || true
+    wait "$MEDIAMTX_PID" "$WEBSERVER_PID" 2>/dev/null || true
+}
+trap cleanup TERM INT
 
-# Log environment
-echo "Python version: $(python --version)"
-echo "Working directory: $(pwd)"
+mediamtx /app/mediamtx.yml &
+MEDIAMTX_PID=$!
 
-# Optional: Run pytest if tests exist
-if [ -f "test_app.py" ]; then
-    echo "Running tests..."
-    python -m pytest test_app.py -v || true
-fi
+python web_server.py &
+WEBSERVER_PID=$!
 
-# Execute the main application or passed command
-if [ $# -eq 0 ]; then
-    # Start the PyQt app with display support
-    if [ ! -z "$DISPLAY" ]; then
-        echo "Starting PyQt application on display: $DISPLAY"
-        exec python app.py
-    else
-        echo "No display available. Set DISPLAY environment variable or use headless mode."
-        exec python -c "from app import VideoWallApp; app = VideoWallApp(); app.run_headless()"
-    fi
-else
-    # Execute passed command
-    exec "$@"
-fi
+wait -n "$MEDIAMTX_PID" "$WEBSERVER_PID"
+EXIT_CODE=$?
+cleanup
+exit "$EXIT_CODE"

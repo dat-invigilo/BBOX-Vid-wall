@@ -1,3 +1,6 @@
+# mediamtx binary - copied in below rather than run as a separate container/module
+FROM bluenviron/mediamtx:1.9.3-ffmpeg AS mediamtx
+
 # Use full Python image for Flask web server
 FROM python:3.11
 
@@ -10,6 +13,8 @@ RUN apt-get update && \
     ffmpeg \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+COPY --from=mediamtx /mediamtx /usr/local/bin/mediamtx
 
 WORKDIR /app
 
@@ -24,12 +29,16 @@ COPY web_server.py .
 COPY video_recorder.py .
 COPY ffmpeg_recorder.py .
 COPY config.yaml .
+COPY mediamtx.yml .
+COPY entrypoint.sh .
 COPY templates/ ./templates/
 COPY static/ ./static/
+
+RUN chmod +x entrypoint.sh
 
 ENV PYTHONUNBUFFERED=1
 ENV FLASK_ENV=production
 
-EXPOSE 5002
+EXPOSE 5002 8554 8888 9997
 
-CMD ["python", "web_server.py"]
+ENTRYPOINT ["./entrypoint.sh"]
