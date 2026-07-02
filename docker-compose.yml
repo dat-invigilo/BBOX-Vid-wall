@@ -23,8 +23,6 @@ services:
     volumes:
       # Config files
       - ./config.yaml:/app/config.yaml:rw
-      # mediamtx rewrites this file as paths are added/removed via its API
-      - ./mediamtx.yml:/app/mediamtx.yml:rw
       # Test videos for dev mode
       - ./test_videos:/app/test_videos:ro
       # Optional: persist logs
