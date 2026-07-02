@@ -26,10 +26,12 @@ rtspAddress: :8554
 protocols: [tcp]
 
 # HLS - what the browser actually plays via hls.js.
+# fmp4 (not mpegts) - camera sources emit H265, which the legacy mpegts
+# HLS variant can't carry (H264-only); fmp4 supports H265/H264/AAC.
 hls: yes
 hlsAddress: :8888
 hlsAllowOrigin: '*'
-hlsVariant: mpegts
+hlsVariant: fmp4
 hlsSegmentCount: 7
 hlsSegmentDuration: 1s
 
