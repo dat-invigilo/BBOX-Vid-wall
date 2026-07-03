@@ -13,6 +13,7 @@ from mediamtx_client import MediamtxClient
 import logging
 import yaml
 import os
+import glob
 import traceback
 
 logging.basicConfig(level=logging.INFO)
@@ -138,16 +139,16 @@ def parse_deepstream_uris():
             deployment = shared_config['DEPLOYMENT']
             num_gpus = deployment.get('NUM_GPUS', 0)
 
-            # Parse deepstream config files for each GPU
-            for gpu_id in range(num_gpus):
-                config_file = os.path.join(
-                    shared_volume_path,
-                    'configs',
-                    str(gpu_id),
-                    f'deepstream_app_config_gpu{gpu_id}.txt'
-                )
+            # `configs/<N>` is indexed by pipeline, not GPU - the
+            # deepstream_app_config_gpu*.txt file inside it can have any GPU
+            # number in its own filename, so glob for it instead of assuming
+            # it matches the directory index.
+            for pipeline_idx in range(num_gpus):
+                config_dir = os.path.join(shared_volume_path, 'configs', str(pipeline_idx))
+                matches = sorted(glob.glob(os.path.join(config_dir, 'deepstream_app_config_gpu*.txt')))
 
-                if os.path.exists(config_file):
+                if matches:
+                    config_file = matches[0]
                     try:
                         sources = {}  # source_id -> uri
                         sinks = {}    # source_id -> rtsp_port (only for type 4)
@@ -219,7 +220,9 @@ def parse_deepstream_uris():
                             streams_info.append(stream_info)
 
                     except Exception as e:
-                        logger.warning(f"Could not read config for GPU {gpu_id}: {str(e)}")
+                        logger.warning(f"Could not read config for pipeline {pipeline_idx} ({config_file}): {str(e)}")
+                else:
+                    logger.warning(f"  No deepstream_app_config_gpu*.txt found in {config_dir}")
     except Exception as e:
         logger.error(f"Could not parse deepstream configs: {str(e)}")
         logger.error(traceback.format_exc())
